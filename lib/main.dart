@@ -47,7 +47,13 @@ class MyHomePage extends StatefulWidget {
   State<MyHomePage> createState() => _MyHomePageState();
 }
 
+enum Body {
+  main,
+  teams
+}
+
 class _MyHomePageState extends State<MyHomePage> {
+  Body body = Body.main;
   @override
   Widget build(BuildContext context) {
     // This method is rerun every time setState is called.
@@ -62,8 +68,8 @@ class _MyHomePageState extends State<MyHomePage> {
       drawer: Drawer(
         child: ListView(
           padding: EdgeInsets.zero,
-          children: const <Widget>[
-            DrawerHeader(
+          children: <Widget>[
+            const DrawerHeader(
               decoration: BoxDecoration(
                 color: Colors.blue,
               ),
@@ -76,11 +82,37 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ),
             ListTile(
-              title: Text('Teams'),
+              title: const Text('Main'),
+              onTap: () {
+                setState(() {
+                  body = Body.main;
+                });
+                Navigator.pop(context); // close the drawer
+              },
+            ),
+            ListTile(
+              title: const Text('Teams'),
+              onTap: () {
+                setState(() {
+                  body = Body.teams;
+                });
+                Navigator.pop(context); // close the drawer
+              },
             ),
           ],
         ),
       ),
+      body: GetBody(body),
     );
+  }
+
+  Widget GetBody(Body body) {
+    if (body == Body.main) {
+      return const Text('Main body');
+    }
+    if (body == Body.teams) {
+      return const Text('Teams body');
+    }
+    return const Text('Not reached');
   }
 }
