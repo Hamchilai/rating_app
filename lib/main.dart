@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 void main() {
   runApp(const MyApp());
@@ -111,8 +113,107 @@ class _MyHomePageState extends State<MyHomePage> {
       return const Text('Main body');
     }
     if (body == Body.teams) {
-      return const Text('Teams body');
+      return const TeamsList();
     }
     return const Text('Not reached');
+  }
+}
+
+class ApiItem {
+  final String globalId;
+  final String type;
+  const ApiItem(this.globalId, this.type);
+  factory ApiItem.fromJson(Map<String, dynamic> json) {
+    String globalId = json["@id"];
+    String type = json["@type"];
+
+    switch (type) {
+      case Team.jsonType:
+        return Team(globalId, json["id"], json["name"], ApiItem.fromJson(json["town"]) as Town);
+      case Town.jsonType:
+        return Town(globalId, json["id"], json["name"]);
+    }
+    return ApiItem(globalId, type);
+  }
+}
+
+class Team extends ApiItem {
+  static const String jsonType = "Team";
+  final int id;
+  final String name;
+  final Town town;
+  const Team(String globalId, this.id, this.name, this.town) : super(globalId, jsonType);
+}
+
+class Town extends ApiItem {
+  static const String jsonType = "Town";
+  final int id;
+  final String name;
+  const Town(String globalId, this.id, this.name) : super(globalId, jsonType);
+}
+
+class TeamsHttpService {
+  Future<List<Team>> listTeams() async {
+    final response = await http.get(Uri.https('api.rating.chgk.net', '/teams',
+        {'page': '1', 'itemsPerPage' : '70', 'town': '205'}));
+
+    if (response.statusCode == 200) {
+      var result = json.decode(response.body);
+      return List.generate(result['hydra:member'].length, (i) {
+        return ApiItem.fromJson(result['hydra:member'][i]) as Team;
+      });
+    } else {
+      // If the server did not return a 200 OK response,
+      // then throw an exception.
+      throw Exception('Failed to load teams');
+    }
+  }
+}
+
+class TeamsList extends StatefulWidget {
+  const TeamsList({Key? key}) : super(key: key);
+
+  @override
+  State<TeamsList> createState() => _TeamsListState();
+}
+
+class _TeamsListState extends State<TeamsList> {
+  final _biggerFont = const TextStyle(fontSize: 18);
+  Future<List<Team>>? _future;
+  final teamHttpService = TeamsHttpService();
+
+  @override
+  void initState() {
+    super.initState();
+    _future = teamHttpService.listTeams();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<Team>>(
+        future: _future,
+        builder: (context, snapshot) {
+          if (snapshot.hasData) {
+            return ListView.builder(
+                itemCount: snapshot.requireData.length,
+                itemBuilder: (context, index) {
+                  return ListTile(
+                    title: Text(
+                      snapshot.requireData[index].name,
+                      style: _biggerFont,
+                    ),
+                    subtitle: Text(
+                      snapshot.requireData[index].town.name,
+                    ),
+                  );
+                }
+            );
+          }
+          if (snapshot.hasError) {
+            return Text('Error: ${snapshot.error}');
+          }
+          return const CircularProgressIndicator();
+        }
+    );
   }
 }
