@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:io';
+import 'dart:developer' as developer;
+
 
 void main() {
   runApp(const MyApp());
@@ -153,7 +156,15 @@ class Town extends ApiItem {
 }
 
 class TeamsHttpService {
+  static const apiUrl = 'https://api.rating.chgk.net';
+  static const hydraViewKey = 'hydra:view';
+  static const hydraNextKey = 'hydra:next';
   Future<List<Team>> listTeams() async {
+    developer.log('PREVED ');
+    await for (final team in teamsStream()) {
+      developer.log('PREVED ${team.name}', name: 'my.app');
+      stderr.writeln('PREVED ${team.name}');
+    }
     final response = await http.get(Uri.https('api.rating.chgk.net', '/teams',
         {'page': '1', 'itemsPerPage' : '70', 'town': '205'}));
 
@@ -166,6 +177,30 @@ class TeamsHttpService {
       // If the server did not return a 200 OK response,
       // then throw an exception.
       throw Exception('Failed to load teams');
+    }
+  }
+  Stream<ApiItem> ratingStream(String path) async* {
+    stderr.writeln('PREVED $path');
+    final response = await http.get(Uri.parse(apiUrl+path));
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load $path');
+    }
+    final result = json.decode(response.body);
+    for (var jsonItem in result['hydra:member']) {
+      yield ApiItem.fromJson(jsonItem);
+    }
+
+    final Map<String, dynamic> hydraView = result[hydraViewKey];
+    if (!hydraView.containsKey(hydraNextKey)) {
+      return;
+    }
+    yield* ratingStream(hydraView[hydraNextKey]);
+  }
+
+  Stream<Team> teamsStream() async* {
+    developer.log('PREVED ');
+    await for (final team in ratingStream('/teams?itemsPerPage=30&page=1')) {
+      yield team as Team;
     }
   }
 }
@@ -185,6 +220,8 @@ class _TeamsListState extends State<TeamsList> {
   @override
   void initState() {
     super.initState();
+    developer.log('PREVED');
+    stderr.writeln('PREVED');
     _future = teamHttpService.listTeams();
   }
 
