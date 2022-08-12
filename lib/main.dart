@@ -55,7 +55,7 @@ enum Body {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  Body body = Body.main;
+  Body body = Body.teams;
   @override
   Widget build(BuildContext context) {
     // This method is rerun every time setState is called.
