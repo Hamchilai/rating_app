@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:endless/endless.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:developer' as developer;
-
 
 void main() {
   runApp(const MyApp());
@@ -54,7 +54,9 @@ class MyHomePage extends StatefulWidget {
 
 enum Body {
   main,
-  teams
+  teams,
+  towns,
+  countries,
 }
 
 class _MyHomePageState extends State<MyHomePage> {
@@ -104,6 +106,24 @@ class _MyHomePageState extends State<MyHomePage> {
                 Navigator.pop(context); // close the drawer
               },
             ),
+            ListTile(
+              title: const Text('Towns'),
+              onTap: () {
+                setState(() {
+                  body = Body.towns;
+                });
+                Navigator.pop(context); // close the drawer
+              },
+            ),
+            ListTile(
+              title: const Text('Countries'),
+              onTap: () {
+                setState(() {
+                  body = Body.countries;
+                });
+                Navigator.pop(context); // close the drawer
+              },
+            ),
           ],
         ),
       ),
@@ -118,6 +138,12 @@ class _MyHomePageState extends State<MyHomePage> {
     if (body == Body.teams) {
       return const TeamsList();
     }
+    if (body == Body.towns) {
+      return const TownsList();
+    }
+    if (body == Body.countries) {
+      return const CountriesList();
+    }
     return const Text('Not reached');
   }
 }
@@ -125,46 +151,52 @@ class _MyHomePageState extends State<MyHomePage> {
 class ApiItem {
   final String globalId;
   final String type;
-  const ApiItem(this.globalId, this.type);
+  ApiItem(Map<String, dynamic> json) : globalId = json['@id'], type = json['@type'];
   factory ApiItem.fromJson(Map<String, dynamic> json) {
-    String globalId = json["@id"];
     String type = json["@type"];
-
     switch (type) {
       case Team.jsonType:
-        return Team(globalId, json["id"], json["name"], ApiItem.fromJson(json["town"]) as Town);
+        return Team(json);
       case Town.jsonType:
-        return Town(globalId, json["id"], json["name"]);
+        return Town(json);
+      case Country.jsonType:
+        return Country(json);
     }
-    return ApiItem(globalId, type);
+    return ApiItem(json);
   }
 }
 
 class Team extends ApiItem {
   static const String jsonType = "Team";
+  static const String apiMethod = "teams";
   final int id;
   final String name;
   final Town town;
-  const Team(String globalId, this.id, this.name, this.town) : super(globalId, jsonType);
+  Team(Map<String, dynamic> json) : id = json['id'], name = json['name'], town = Town(json), super(json);
 }
 
 class Town extends ApiItem {
   static const String jsonType = "Town";
+  static const String apiMethod = "towns";
   final int id;
   final String name;
-  const Town(String globalId, this.id, this.name) : super(globalId, jsonType);
+  Town(Map<String, dynamic> json) : id = json['id'],  name = json['name'], super(json);
+}
+
+class Country extends ApiItem {
+  static const String jsonType = "Country";
+  static const String apiMethod = "countries";
+  final int id;
+  final String name;
+  Country(Map<String, dynamic> json) : id = json['id'],  name = json['name'], super(json);
 }
 
 class TeamsHttpService {
-  static const apiUrl = 'https://api.rating.chgk.net';
+  static const apiAddress = 'api.rating.chgk.net';
+  static const apiUrl = 'https://$apiAddress';
   static const hydraViewKey = 'hydra:view';
   static const hydraNextKey = 'hydra:next';
   Future<List<Team>> listTeams() async {
-    developer.log('PREVED ');
-    await for (final team in teamsStream()) {
-      developer.log('PREVED ${team.name}', name: 'my.app');
-      stderr.writeln('PREVED ${team.name}');
-    }
     final response = await http.get(Uri.https('api.rating.chgk.net', '/teams',
         {'page': '1', 'itemsPerPage' : '70', 'town': '205'}));
 
@@ -179,8 +211,20 @@ class TeamsHttpService {
       throw Exception('Failed to load teams');
     }
   }
+
+  Future<List<T>> getPage<T extends ApiItem>(String method, int page, int itemsPerPage) async {
+    final response = await http.get(Uri.https(apiAddress, '/$method',
+        {'page': page.toString(), 'itemsPerPage' : itemsPerPage.toString()}));
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load $method');
+    }
+    final result = json.decode(response.body);
+    return List.generate(result['hydra:member'].length, (i) {
+        return ApiItem.fromJson(result['hydra:member'][i]) as T;
+    });
+  }
+
   Stream<ApiItem> ratingStream(String path) async* {
-    stderr.writeln('PREVED $path');
     final response = await http.get(Uri.parse(apiUrl+path));
     if (response.statusCode != 200) {
       throw Exception('Failed to load $path');
@@ -198,9 +242,14 @@ class TeamsHttpService {
   }
 
   Stream<Team> teamsStream() async* {
-    developer.log('PREVED ');
     await for (final team in ratingStream('/teams?itemsPerPage=30&page=1')) {
       yield team as Team;
+    }
+  }
+
+  Stream<Town> townsStream() async* {
+    await for (final item in ratingStream('/towns?itemsPerPage=30&page=1')) {
+      yield item as Town;
     }
   }
 }
@@ -250,6 +299,90 @@ class _TeamsListState extends State<TeamsList> {
             return Text('Error: ${snapshot.error}');
           }
           return const CircularProgressIndicator();
+        }
+    );
+  }
+}
+
+class TownsList extends StatefulWidget {
+  const TownsList({Key? key}) : super(key: key);
+
+  @override
+  State<TownsList> createState() => _TownsListState();
+}
+
+class _TownsListState extends State<TownsList> {
+  final teamHttpService = TeamsHttpService();
+  static const pageSize = 30;
+  static const _biggerFont = const TextStyle(fontSize: 18);
+
+  @override
+  Widget build(BuildContext context) {
+    return EndlessPaginationListView<Town>(
+        loadMore: (pageIndex) {
+          return teamHttpService.getPage<Town>(Town.apiMethod, pageIndex + 1, pageSize);
+        },
+        paginationDelegate: EndlessPaginationDelegate(
+          pageSize: pageSize,
+        ),
+        itemBuilder: (context,
+            {
+              required item,
+              required index,
+              required totalItems,
+            }
+            ) {
+          return ListTile(
+              title: Text(
+                item.name,
+                //style: _biggerFont,
+              ),
+              subtitle: Text(
+                item.id.toString(),
+              ),
+          );
+        }
+    );
+  }
+}
+
+class CountriesList extends StatefulWidget {
+  const CountriesList({Key? key}) : super(key: key);
+
+  @override
+  State<CountriesList> createState() => _CountriesListState();
+}
+
+class _CountriesListState extends State<CountriesList> {
+  final teamHttpService = TeamsHttpService();
+  static const pageSize = 30;
+  static const _biggerFont = const TextStyle(fontSize: 18);
+
+  @override
+  Widget build(BuildContext context) {
+    return EndlessPaginationListView<Country>(
+        loadMore: (pageIndex) {
+          return teamHttpService.getPage<Country>(Country.apiMethod, pageIndex + 1, pageSize);
+        },
+        paginationDelegate: EndlessPaginationDelegate(
+          pageSize: pageSize,
+        ),
+        itemBuilder: (context,
+            {
+              required item,
+              required index,
+              required totalItems,
+            }
+            ) {
+          return ListTile(
+            title: Text(
+              item.name,
+              //style: _biggerFont,
+            ),
+            subtitle: Text(
+              item.id.toString(),
+            ),
+          );
         }
     );
   }
