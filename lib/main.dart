@@ -139,10 +139,10 @@ class _MyHomePageState extends State<MyHomePage> {
       return const TeamsList();
     }
     if (body == Body.towns) {
-      return const TownsList();
+      return const ApiItemList<Town>();
     }
     if (body == Body.countries) {
-      return const CountriesList();
+      return const ApiItemList<Country>();
     }
     return const Text('Not reached');
   }
@@ -151,7 +151,13 @@ class _MyHomePageState extends State<MyHomePage> {
 class ApiItem {
   final String globalId;
   final String type;
-  ApiItem(Map<String, dynamic> json) : globalId = json['@id'], type = json['@type'];
+  final int id;
+  final String name;
+  ApiItem(Map<String, dynamic> json) :
+        globalId = json['@id'],
+        type = json['@type'],
+        id = json['id'],
+        name = json['name'];
   factory ApiItem.fromJson(Map<String, dynamic> json) {
     String type = json["@type"];
     switch (type) {
@@ -168,27 +174,35 @@ class ApiItem {
 
 class Team extends ApiItem {
   static const String jsonType = "Team";
-  static const String apiMethod = "teams";
-  final int id;
-  final String name;
   final Town town;
-  Team(Map<String, dynamic> json) : id = json['id'], name = json['name'], town = Town(json), super(json);
+  final Country country;
+  Team(Map<String, dynamic> json) :
+        town = Town(json['town']),
+        country = Country(json['country']),
+        super(json);
 }
 
 class Town extends ApiItem {
   static const String jsonType = "Town";
-  static const String apiMethod = "towns";
-  final int id;
-  final String name;
-  Town(Map<String, dynamic> json) : id = json['id'],  name = json['name'], super(json);
+  Town(Map<String, dynamic> json) : super(json);
 }
 
 class Country extends ApiItem {
   static const String jsonType = "Country";
-  static const String apiMethod = "countries";
-  final int id;
-  final String name;
-  Country(Map<String, dynamic> json) : id = json['id'],  name = json['name'], super(json);
+  Country(Map<String, dynamic> json) : super(json);
+}
+
+String apiMethod<T>() {
+  if (T == Team) {
+    return "teams";
+  }
+  if (T == Town) {
+    return "towns";
+  }
+  if (T == Country) {
+    return "countries";
+  }
+  throw Exception("Not reached");
 }
 
 class TeamsHttpService {
@@ -304,65 +318,23 @@ class _TeamsListState extends State<TeamsList> {
   }
 }
 
-class TownsList extends StatefulWidget {
-  const TownsList({Key? key}) : super(key: key);
+class ApiItemList<T extends ApiItem> extends StatefulWidget {
+  const ApiItemList({Key? key}) : super(key: key);
 
   @override
-  State<TownsList> createState() => _TownsListState();
+  State<ApiItemList<T>> createState() => _ApiItemListState<T>();
 }
 
-class _TownsListState extends State<TownsList> {
+class _ApiItemListState<T extends ApiItem> extends State<ApiItemList<T>> {
   final teamHttpService = TeamsHttpService();
   static const pageSize = 30;
   static const _biggerFont = const TextStyle(fontSize: 18);
 
   @override
   Widget build(BuildContext context) {
-    return EndlessPaginationListView<Town>(
+    return EndlessPaginationListView<T>(
         loadMore: (pageIndex) {
-          return teamHttpService.getPage<Town>(Town.apiMethod, pageIndex + 1, pageSize);
-        },
-        paginationDelegate: EndlessPaginationDelegate(
-          pageSize: pageSize,
-        ),
-        itemBuilder: (context,
-            {
-              required item,
-              required index,
-              required totalItems,
-            }
-            ) {
-          return ListTile(
-              title: Text(
-                item.name,
-                //style: _biggerFont,
-              ),
-              subtitle: Text(
-                item.id.toString(),
-              ),
-          );
-        }
-    );
-  }
-}
-
-class CountriesList extends StatefulWidget {
-  const CountriesList({Key? key}) : super(key: key);
-
-  @override
-  State<CountriesList> createState() => _CountriesListState();
-}
-
-class _CountriesListState extends State<CountriesList> {
-  final teamHttpService = TeamsHttpService();
-  static const pageSize = 30;
-  static const _biggerFont = const TextStyle(fontSize: 18);
-
-  @override
-  Widget build(BuildContext context) {
-    return EndlessPaginationListView<Country>(
-        loadMore: (pageIndex) {
-          return teamHttpService.getPage<Country>(Country.apiMethod, pageIndex + 1, pageSize);
+          return teamHttpService.getPage<T>(apiMethod<T>(), pageIndex + 1, pageSize);
         },
         paginationDelegate: EndlessPaginationDelegate(
           pageSize: pageSize,
@@ -380,7 +352,7 @@ class _CountriesListState extends State<CountriesList> {
               //style: _biggerFont,
             ),
             subtitle: Text(
-              item.id.toString(),
+              'id: ${item.id.toString()}',
             ),
           );
         }
