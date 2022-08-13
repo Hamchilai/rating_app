@@ -57,6 +57,7 @@ enum Body {
   teams,
   towns,
   countries,
+  venues,
 }
 
 class _MyHomePageState extends State<MyHomePage> {
@@ -124,6 +125,15 @@ class _MyHomePageState extends State<MyHomePage> {
                 Navigator.pop(context); // close the drawer
               },
             ),
+            ListTile(
+              title: const Text('Venues'),
+              onTap: () {
+                setState(() {
+                  body = Body.venues;
+                });
+                Navigator.pop(context); // close the drawer
+              },
+            ),
           ],
         ),
       ),
@@ -143,6 +153,9 @@ class _MyHomePageState extends State<MyHomePage> {
     }
     if (body == Body.countries) {
       return const ApiItemList<Country>();
+    }
+    if (body == Body.venues) {
+      return const ApiItemList<Venue>();
     }
     return const Text('Not reached');
   }
@@ -178,6 +191,8 @@ class ApiItem {
         return Town(json);
       case Country.jsonType:
         return Country(json);
+      case Venue.jsonType:
+        return Venue(json);
     }
     throw Exception("Can't build an item from ${json.toString()}");
   }
@@ -210,6 +225,16 @@ class Country extends ApiItem {
   Country(Map<String, dynamic> json) : super(json);
 }
 
+class Venue extends ApiItem {
+  static const String jsonType = "Venue";
+  final Town town;
+  Venue(Map<String, dynamic> json) :
+        town = ApiItem.maybeBuildFromJson(json['town'])! as Town,
+        super(json);
+  @override
+  get subtitle => 'id: $id, ${town.name}, ${town.country?.name}';
+}
+
 String apiMethod<T>() {
   if (T == Team) {
     return "teams";
@@ -219,6 +244,9 @@ String apiMethod<T>() {
   }
   if (T == Country) {
     return "countries";
+  }
+  if (T == Venue) {
+    return "venues";
   }
   throw Exception("Not reached");
 }
