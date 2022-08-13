@@ -162,8 +162,15 @@ class ApiItem {
         type = json['@type'],
         id = json['id'],
         name = json['name'];
-  factory ApiItem.fromJson(Map<String, dynamic> json) {
-    String type = json["@type"];
+
+  static ApiItem? maybeBuildFromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return null;
+    }
+    String? type = json["@type"];
+    if (type == null) {
+      return null;
+    }
     switch (type) {
       case Team.jsonType:
         return Team(json);
@@ -172,30 +179,30 @@ class ApiItem {
       case Country.jsonType:
         return Country(json);
     }
-    return ApiItem(json);
+    throw Exception("Can't build an item from ${json.toString()}");
   }
 }
 
 class Team extends ApiItem {
   static const String jsonType = "Team";
-  final Town town;
+  final Town? town;
   Team(Map<String, dynamic> json) :
-        town = Town(json['town']),
+        town = ApiItem.maybeBuildFromJson(json['town']) as Town,
         super(json);
 
   @override
-  String get subtitle => 'id: $id, ${town.name}, ${town.country.name}';
+  String get subtitle => 'id: $id, ${town?.name}, ${town?.country?.name}';
 }
 
 class Town extends ApiItem {
   static const String jsonType = "Town";
-  final Country country;
+  final Country? country;
   Town(Map<String, dynamic> json) :
-        country = Country(json['country']),
+        country = ApiItem.maybeBuildFromJson(json['country']) as Country,
         super(json);
 
   @override
-  String get subtitle => 'id: $id, ${country.name}';
+  String get subtitle => 'id: $id, ${country?.name}';
 }
 
 class Country extends ApiItem {
@@ -228,7 +235,7 @@ class TeamsHttpService {
     if (response.statusCode == 200) {
       var result = json.decode(response.body);
       return List.generate(result['hydra:member'].length, (i) {
-        return ApiItem.fromJson(result['hydra:member'][i]) as Team;
+        return ApiItem.maybeBuildFromJson(result['hydra:member'][i])! as Team;
       });
     } else {
       // If the server did not return a 200 OK response,
@@ -245,7 +252,7 @@ class TeamsHttpService {
     }
     final result = json.decode(response.body);
     return List.generate(result['hydra:member'].length, (i) {
-        return ApiItem.fromJson(result['hydra:member'][i]) as T;
+        return ApiItem.maybeBuildFromJson(result['hydra:member'][i])! as T;
     });
   }
 
@@ -256,7 +263,7 @@ class TeamsHttpService {
     }
     final result = json.decode(response.body);
     for (var jsonItem in result['hydra:member']) {
-      yield ApiItem.fromJson(jsonItem);
+      yield ApiItem.maybeBuildFromJson(jsonItem)!;
     }
 
     final Map<String, dynamic> hydraView = result[hydraViewKey];
@@ -276,56 +283,6 @@ class TeamsHttpService {
     await for (final item in ratingStream('/towns?itemsPerPage=30&page=1')) {
       yield item as Town;
     }
-  }
-}
-
-class TeamsList extends StatefulWidget {
-  const TeamsList({Key? key}) : super(key: key);
-
-  @override
-  State<TeamsList> createState() => _TeamsListState();
-}
-
-class _TeamsListState extends State<TeamsList> {
-  final _biggerFont = const TextStyle(fontSize: 18);
-  Future<List<Team>>? _future;
-  final teamHttpService = TeamsHttpService();
-
-  @override
-  void initState() {
-    super.initState();
-    developer.log('PREVED');
-    stderr.writeln('PREVED');
-    _future = teamHttpService.listTeams();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<List<Team>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.hasData) {
-            return ListView.builder(
-                itemCount: snapshot.requireData.length,
-                itemBuilder: (context, index) {
-                  return ListTile(
-                    title: Text(
-                      snapshot.requireData[index].name,
-                      style: _biggerFont,
-                    ),
-                    subtitle: Text(
-                      snapshot.requireData[index].town.name,
-                    ),
-                  );
-                }
-            );
-          }
-          if (snapshot.hasError) {
-            return Text('Error: ${snapshot.error}');
-          }
-          return const CircularProgressIndicator();
-        }
-    );
   }
 }
 
