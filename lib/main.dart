@@ -136,7 +136,7 @@ class _MyHomePageState extends State<MyHomePage> {
       return const Text('Main body');
     }
     if (body == Body.teams) {
-      return const TeamsList();
+      return const ApiItemList<Team>();
     }
     if (body == Body.towns) {
       return const ApiItemList<Town>();
@@ -153,6 +153,10 @@ class ApiItem {
   final String type;
   final int id;
   final String name;
+
+  String get title => name;
+  String get subtitle => 'id: $id';
+
   ApiItem(Map<String, dynamic> json) :
         globalId = json['@id'],
         type = json['@type'],
@@ -175,16 +179,23 @@ class ApiItem {
 class Team extends ApiItem {
   static const String jsonType = "Team";
   final Town town;
-  final Country country;
   Team(Map<String, dynamic> json) :
         town = Town(json['town']),
-        country = Country(json['country']),
         super(json);
+
+  @override
+  String get subtitle => 'id: $id, ${town.name}, ${town.country.name}';
 }
 
 class Town extends ApiItem {
   static const String jsonType = "Town";
-  Town(Map<String, dynamic> json) : super(json);
+  final Country country;
+  Town(Map<String, dynamic> json) :
+        country = Country(json['country']),
+        super(json);
+
+  @override
+  String get subtitle => 'id: $id, ${country.name}';
 }
 
 class Country extends ApiItem {
@@ -348,11 +359,11 @@ class _ApiItemListState<T extends ApiItem> extends State<ApiItemList<T>> {
             ) {
           return ListTile(
             title: Text(
-              item.name,
+              item.title,
               //style: _biggerFont,
             ),
             subtitle: Text(
-              'id: ${item.id.toString()}',
+              item.subtitle,
             ),
           );
         }
