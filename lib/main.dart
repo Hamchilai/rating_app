@@ -55,6 +55,7 @@ class MyHomePage extends StatefulWidget {
 enum Body {
   main,
   teams,
+  players,
   towns,
   countries,
   venues,
@@ -108,6 +109,15 @@ class _MyHomePageState extends State<MyHomePage> {
               },
             ),
             ListTile(
+              title: const Text('Players'),
+              onTap: () {
+                setState(() {
+                  body = Body.players;
+                });
+                Navigator.pop(context); // close the drawer
+              },
+            ),
+            ListTile(
               title: const Text('Towns'),
               onTap: () {
                 setState(() {
@@ -148,6 +158,9 @@ class _MyHomePageState extends State<MyHomePage> {
     if (body == Body.teams) {
       return const ApiItemList<Team>();
     }
+    if (body == Body.players) {
+      return const PlayerListWithSearch();
+    }
     if (body == Body.towns) {
       return const ApiItemList<Town>();
     }
@@ -158,6 +171,38 @@ class _MyHomePageState extends State<MyHomePage> {
       return const ApiItemList<Venue>();
     }
     return const Text('Not reached');
+  }
+}
+
+class PlayerListWithSearch extends StatefulWidget {
+  const PlayerListWithSearch({Key? key}) : super(key: key);
+
+  @override
+  State<PlayerListWithSearch> createState() => _PlayerListWithSearchState();
+}
+
+class _PlayerListWithSearchState extends State<PlayerListWithSearch> {
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: <Widget>[
+        TextField(
+          decoration: InputDecoration(
+            prefixIcon: Icon(Icons.search),
+            hintText: "Surname",
+          ),
+          onTap: () {
+            developer.log('PREVED on tap');
+          },
+          onSubmitted: (String value) {
+            developer.log('PREVED on submitted $value');
+          },
+        ),
+        Expanded(
+          child: ApiItemList<Player>(),
+        )
+      ],
+    );
   }
 }
 
@@ -187,6 +232,8 @@ class ApiItem {
     switch (type) {
       case Team.jsonType:
         return Team(json);
+      case Player.jsonType:
+        return Player(json);
       case Town.jsonType:
         return Town(json);
       case Country.jsonType:
@@ -207,6 +254,19 @@ class Team extends ApiItem {
 
   @override
   String get subtitle => 'id: $id, ${town?.name}, ${town?.country?.name}';
+}
+
+class Player extends ApiItem {
+  static const String jsonType = "Player";
+  final String surname;
+  final String? patronymic;
+  Player(Map<String, dynamic> json) :
+      surname = json['surname'],
+      patronymic = json['patronymic'],
+      super(json);
+
+  @override
+  String get title => '$name $surname';
 }
 
 class Town extends ApiItem {
@@ -238,6 +298,9 @@ class Venue extends ApiItem {
 String apiMethod<T>() {
   if (T == Team) {
     return "teams";
+  }
+  if (T == Player) {
+    return "players";
   }
   if (T == Town) {
     return "towns";
