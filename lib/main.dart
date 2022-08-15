@@ -547,8 +547,12 @@ class DBService {
     }
     final dbList = await db!.rawQuery('SELECT * FROM venues'
         ' INNER JOIN towns USING(town_id) LEFT JOIN countries'
-        ' USING(country_id) WHERE INSTR(UPPER(town_name), UPPER(?)) > 0 LIMIT ?,?', [town, page*itemsPerPage, itemsPerPage]);
-    developer.log('PREVED LIST $dbList');
+        ' USING(country_id)'
+        ' WHERE INSTR(UPPER(venue_name), UPPER(?)) > 0'
+        ' OR INSTR(UPPER(town_name), UPPER(?)) > 0'
+        ' OR INSTR(UPPER(country_name), UPPER(?)) > 0'
+        ' LIMIT ?,?',
+        [town, town, town, page*itemsPerPage, itemsPerPage]);
     return dbList.map((e) => ApiItem.buildFromDB<T>(e) as T).toList();
   }
 }
