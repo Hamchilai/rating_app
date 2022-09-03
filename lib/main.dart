@@ -21,21 +21,20 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'api.rating',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // Try running your application with "flutter run". You'll see the
-        // application has a blue toolbar. Then, without quitting the app, try
-        // changing the primarySwatch below to Colors.green and then invoke
-        // "hot reload" (press "r" in the console where you ran "flutter run",
-        // or simply save your changes to "hot reload" in a Flutter IDE).
-        // Notice that the counter didn't reset back to zero; the application
-        // is not restarted.
-        primarySwatch: Colors.blue,
-      ),
-      home: const MyHomePage(title: 'api.rating app')
-    );
+        title: 'api.rating',
+        theme: ThemeData(
+          // This is the theme of your application.
+          //
+          // Try running your application with "flutter run". You'll see the
+          // application has a blue toolbar. Then, without quitting the app, try
+          // changing the primarySwatch below to Colors.green and then invoke
+          // "hot reload" (press "r" in the console where you ran "flutter run",
+          // or simply save your changes to "hot reload" in a Flutter IDE).
+          // Notice that the counter didn't reset back to zero; the application
+          // is not restarted.
+          primarySwatch: Colors.blue,
+        ),
+        home: const MyHomePage(title: 'api.rating app'));
   }
 }
 
@@ -212,7 +211,7 @@ class _PlayerListWithSearchState extends State<PlayerListWithSearch> {
 }
 
 class ApiItem {
-  //final String globalId;
+  late final String globalId;
   final String type;
   final int id;
   final String name;
@@ -220,9 +219,15 @@ class ApiItem {
   String get title => name;
   String get subtitle => 'id: $id';
 
-  ApiItem(this.type, this.id, this.name);
-  ApiItem.fromJson(Map<String, dynamic> json) :
-  //globalId = json['@id'],
+  static String generateGlobalId(String type, int id) {
+    return "/${apiMethodFromString(type)}/$id";
+  }
+
+  ApiItem(this.type, this.id, this.name) {
+    globalId = generateGlobalId(type, id);
+  }
+  ApiItem.fromJson(Map<String, dynamic> json)
+      : globalId = json['@id'],
         type = json['@type'],
         id = json['id'],
         name = json['name'];
@@ -260,7 +265,7 @@ class ApiItem {
   Map<String, dynamic> toMap() {
     final prefix = '${type.toLowerCase()}_';
     return {
-      '${prefix}id' : id,
+      '${prefix}id': id,
       '${prefix}name': name,
     };
   }
@@ -269,8 +274,7 @@ class ApiItem {
 class Team extends ApiItem {
   static const String jsonType = "Team";
   late final Town? town;
-  Team(Map<String, dynamic> json) :
-        super.fromJson(json) {
+  Team(Map<String, dynamic> json) : super.fromJson(json) {
     final maybeTown = ApiItem.maybeBuildFromJson(json['town']);
     if (maybeTown != null) {
       town = maybeTown as Town;
@@ -287,10 +291,10 @@ class Player extends ApiItem {
   static const String jsonType = "Player";
   final String surname;
   final String? patronymic;
-  Player(Map<String, dynamic> json) :
-      surname = json['surname'],
-      patronymic = json['patronymic'],
-      super.fromJson(json);
+  Player(Map<String, dynamic> json)
+      : surname = json['surname'],
+        patronymic = json['patronymic'],
+        super.fromJson(json);
 
   @override
   String get title => '$name $surname';
@@ -299,8 +303,7 @@ class Player extends ApiItem {
 class Town extends ApiItem {
   static const String jsonType = "Town";
   late final Country? country;
-  Town(Map<String, dynamic> json) :
-        super.fromJson(json) {
+  Town(Map<String, dynamic> json) : super.fromJson(json) {
     final maybeCountry = ApiItem.maybeBuildFromJson(json['country']);
     if (maybeCountry != null) {
       country = maybeCountry as Country;
@@ -309,7 +312,8 @@ class Town extends ApiItem {
     }
   }
 
-  Town.fromDB(Map<String, Object?> map) : super(jsonType, map['town_id'] as int, map['town_name'] as String) {
+  Town.fromDB(Map<String, Object?> map)
+      : super(jsonType, map['town_id'] as int, map['town_name'] as String) {
     if (map.containsKey('country_id')) {
       country = Country.fromDB(map);
     } else {
@@ -335,20 +339,21 @@ class Country extends ApiItem {
 
   Country(Map<String, dynamic> json) : super.fromJson(json);
 
-  Country.fromDB(Map<String, Object?> map) : super(
-      jsonType, map['country_id'] as int, map['country_name'] as String);
+  Country.fromDB(Map<String, Object?> map)
+      : super(
+            jsonType, map['country_id'] as int, map['country_name'] as String);
 }
 
 class Venue extends ApiItem {
   static const String jsonType = "Venue";
   final Town town;
-  Venue(Map<String, dynamic> json) :
-        town = ApiItem.maybeBuildFromJson(json['town'])! as Town,
+  Venue(Map<String, dynamic> json)
+      : town = ApiItem.maybeBuildFromJson(json['town'])! as Town,
         super.fromJson(json);
 
-  Venue.fromDB(Map<String, Object?> map) :
-      town = Town.fromDB(map),
-      super(jsonType, map['venue_id'] as int, map['venue_name'] as String);
+  Venue.fromDB(Map<String, Object?> map)
+      : town = Town.fromDB(map),
+        super(jsonType, map['venue_id'] as int, map['venue_name'] as String);
 
   @override
   get subtitle => 'id: $id, ${town.name}, ${town.country?.name}';
@@ -380,6 +385,22 @@ String apiMethod<T>() {
   throw Exception("Not reached");
 }
 
+String apiMethodFromString(String type) {
+  switch (type) {
+    case Team.jsonType:
+      return apiMethod<Team>();
+    case Player.jsonType:
+      return apiMethod<Player>();
+    case Town.jsonType:
+      return apiMethod<Town>();
+    case Country.jsonType:
+      return apiMethod<Country>();
+    case Venue.jsonType:
+      return apiMethod<Venue>();
+  }
+  throw Exception("Not reached with type $type");
+}
+
 class TeamsHttpService {
   static TeamsHttpService instance = TeamsHttpService();
 
@@ -389,7 +410,7 @@ class TeamsHttpService {
   static const hydraNextKey = 'hydra:next';
   Future<List<Team>> listTeams() async {
     final response = await http.get(Uri.https('api.rating.chgk.net', '/teams',
-        {'page': '1', 'itemsPerPage' : '70', 'town': '205'}));
+        {'page': '1', 'itemsPerPage': '70', 'town': '205'}));
 
     if (response.statusCode == 200) {
       var result = json.decode(response.body);
@@ -423,8 +444,13 @@ class TeamsHttpService {
     return params;
   }
 
-  Future<List<T>> getPage<T extends ApiItem>(String method, int page, int itemsPerPage, {String? searchPattern}) async {
-    var options = {'page': page.toString(), 'itemsPerPage' : itemsPerPage.toString()};
+  Future<List<T>> getPage<T extends ApiItem>(
+      String method, int page, int itemsPerPage,
+      {String? searchPattern}) async {
+    var options = {
+      'page': page.toString(),
+      'itemsPerPage': itemsPerPage.toString()
+    };
     if (searchPattern != null) {
       final searchParams = getSearchParams<T>(searchPattern);
       options.addAll(searchParams);
@@ -436,12 +462,12 @@ class TeamsHttpService {
     }
     final result = json.decode(response.body);
     return List.generate(result['hydra:member'].length, (i) {
-        return ApiItem.maybeBuildFromJson(result['hydra:member'][i])! as T;
+      return ApiItem.maybeBuildFromJson(result['hydra:member'][i])! as T;
     });
   }
 
   Stream<ApiItem> ratingStream(String path) async* {
-    final response = await http.get(Uri.parse(apiUrl+path));
+    final response = await http.get(Uri.parse(apiUrl + path));
     if (response.statusCode != 200) {
       throw Exception('Failed to load $path');
     }
@@ -485,18 +511,18 @@ class _ApiItemListState<T extends ApiItem> extends State<ApiItemList<T>> {
   Widget build(BuildContext context) {
     return EndlessPaginationListView<T>(
         loadMore: (pageIndex) {
-          return TeamsHttpService.instance.getPage<T>(apiMethod<T>(), pageIndex + 1, pageSize);
+          return TeamsHttpService.instance
+              .getPage<T>(apiMethod<T>(), pageIndex + 1, pageSize);
         },
         paginationDelegate: EndlessPaginationDelegate(
           pageSize: pageSize,
         ),
-        itemBuilder: (context,
-            {
-              required item,
-              required index,
-              required totalItems,
-            }
-            ) {
+        itemBuilder: (
+          context, {
+          required item,
+          required index,
+          required totalItems,
+        }) {
           return ListTile(
             title: Text(
               item.title,
@@ -506,16 +532,21 @@ class _ApiItemListState<T extends ApiItem> extends State<ApiItemList<T>> {
               item.subtitle,
             ),
           );
-        }
-    );
+        });
   }
 }
 
 class DBService {
   static DBService instance = DBService();
-  Database? db;
+  late Database db;
+  static const String kFavoritesTable = "favorites";
+  Map<String, bool> favorites = {};
 
-  Future<void> updateCache() async {
+  DBService() {
+    openDB();
+  }
+
+  Future<void> openDB() async {
     final venuesTableName = apiMethod<Venue>();
     final townsTableName = apiMethod<Town>();
     final countryTableName = apiMethod<Country>();
@@ -541,24 +572,59 @@ class DBService {
             'CREATE TABLE IF NOT EXISTS $townsTableName(town_id INTEGER PRIMARY KEY, town_name TEXT, country_id INTEGER)');
         await db.execute(
             'CREATE TABLE IF NOT EXISTS $countryTableName(country_id INTEGER PRIMARY KEY, country_name TEXT)');
+        await db.execute(
+            'CREATE TABLE IF NOT EXISTS $kFavoritesTable(global_id STRING PRIMARY KEY, is_favorite BOOLEAN)');
+
+        {
+          // load favorites
+          final favs = await db.query(kFavoritesTable);
+          for (final fav in favs) {
+            developer.log('load favorites ${fav.toString()}');
+            favorites[fav["global_id"] as String] = (fav["is_favorite"] as int) == 1;
+          }
+        }
       },
       version: 1,
     );
-    await fetchData<Venue>(db!);
-    await fetchData<Town>(db!);
-    return fetchData<Country>(db!);
   }
+
+  bool isFavorite(String globalId) {
+    //final result = await (await db).query(kFavoritesTable, where: "global_id = ?", whereArgs: [globalId]);
+    //if (result.isEmpty) {
+    //return false;
+    //}
+    //return result[0]["is_favorite"]! as bool;
+    return favorites[globalId] ?? false;
+  }
+
+  Future<void> flipIsFavorite(String globalId) async {
+    favorites[globalId] = !isFavorite(globalId);
+    db.insert(kFavoritesTable,
+            {"global_id": globalId, "is_favorite": isFavorite(globalId) ? 1 : 0},
+            conflictAlgorithm: ConflictAlgorithm.replace)
+        .then((value) => developer.log('Inserted as $value'));
+  }
+
+  Future<void> updateCache() async {
+    fetchData<Venue>(db);
+    fetchData<Town>(db);
+    fetchData<Country>(db);
+  }
+
   Future<void> fetchData<T extends ApiItem>(Database db) async {
     final httpService = TeamsHttpService.instance;
     const int pageSize = 30;
     final tableName = apiMethod<T>();
-    int count = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM $tableName'))!;
+    int count = Sqflite.firstIntValue(
+        await db.rawQuery('SELECT COUNT(*) FROM $tableName'))!;
     developer.log('PREVED $count in $tableName');
-    for (int page = count ~/ pageSize; ; page++) {
-      var data = await httpService.getPage<T>(apiMethod<T>(), page+1, pageSize);
+    for (int page = count ~/ pageSize;; page++) {
+      var data =
+          await httpService.getPage<T>(apiMethod<T>(), page + 1, pageSize);
       Batch batch = db.batch();
       for (T t in data) {
-        batch.insert(tableName, t.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+        batch.insert(tableName, t.toMap(),
+            conflictAlgorithm: ConflictAlgorithm.replace);
       }
       await batch.commit(noResult: true);
       if (data.length < pageSize) {
@@ -567,18 +633,26 @@ class DBService {
     }
   }
 
-  Future<List<T>> getPage<T extends ApiItem>(int page, int itemsPerPage, String town) async {
-    if (db == null) {
-      await updateCache();
+  /*
+  Future<Database> get db async {
+    if (database == null) {
+      await openDB();
     }
-    final dbList = await db!.rawQuery('SELECT * FROM venues'
+    return database!;
+  }
+   */
+
+  Future<List<T>> getPage<T extends ApiItem>(
+      int page, int itemsPerPage, String town) async {
+    final dbList = await db.rawQuery(
+        'SELECT * FROM venues'
         ' INNER JOIN towns USING(town_id) LEFT JOIN countries'
         ' USING(country_id)'
         ' WHERE INSTR(UPPER(venue_name), UPPER(?)) > 0'
         ' OR INSTR(UPPER(town_name), UPPER(?)) > 0'
         ' OR INSTR(UPPER(country_name), UPPER(?)) > 0'
         ' LIMIT ?,?',
-        [town, town, town, page*itemsPerPage, itemsPerPage]);
+        [town, town, town, page * itemsPerPage, itemsPerPage]);
     return dbList.map((e) => ApiItem.buildFromDB<T>(e) as T).toList();
   }
 }
@@ -587,7 +661,8 @@ class ApiItemListWithSearch<T extends ApiItem> extends StatefulWidget {
   const ApiItemListWithSearch({Key? key}) : super(key: key);
 
   @override
-  State<ApiItemListWithSearch<T>> createState() => _ApiItemListWithSearchState<T>();
+  State<ApiItemListWithSearch<T>> createState() =>
+      _ApiItemListWithSearchState<T>();
 }
 
 String getHintText<T>() {
@@ -601,10 +676,12 @@ String getHintText<T>() {
   }
 }
 
-class _ApiItemListWithSearchState<T extends ApiItem> extends State<ApiItemListWithSearch<T>> {
+class _ApiItemListWithSearchState<T extends ApiItem>
+    extends State<ApiItemListWithSearch<T>> {
   String? searchPattern;
   static const pageSize = 30;
-  final EndlessPaginationController<T> controller = EndlessPaginationController();
+  final EndlessPaginationController<T> controller =
+      EndlessPaginationController();
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -642,34 +719,44 @@ class _ApiItemListWithSearchState<T extends ApiItem> extends State<ApiItemListWi
             child: EndlessPaginationListView<T>(
                 loadMore: (pageIndex) {
                   if (T == Venue) {
-                    return DBService.instance.getPage<T>(
-                        pageIndex, pageSize, searchPattern ?? "");
+                    return DBService.instance
+                        .getPage<T>(pageIndex, pageSize, searchPattern ?? "");
                   }
-                  return TeamsHttpService.instance.getPage(apiMethod<T>(), pageIndex + 1, pageSize, searchPattern: searchPattern);
+                  return TeamsHttpService.instance.getPage(
+                      apiMethod<T>(), pageIndex + 1, pageSize,
+                      searchPattern: searchPattern);
                 },
                 paginationDelegate: EndlessPaginationDelegate(
                   pageSize: pageSize,
                 ),
                 controller: controller,
-                itemBuilder: (context,
-                    {
-                      required item,
-                      required index,
-                      required totalItems,
-                    }
-                    ) {
+                itemBuilder: (
+                  context, {
+                  required item,
+                  required index,
+                  required totalItems,
+                }) {
                   return ListTile(
-                    title: Text(
-                      item.title,
-                      //style: _biggerFont,
-                    ),
-                    subtitle: Text(
-                      item.subtitle,
-                    ),
-                  );
-                }
-            )
-        )
+                      title: Text(
+                        item.title,
+                        //style: _biggerFont,
+                      ),
+                      subtitle: Text(
+                        item.subtitle,
+                      ),
+                      trailing: InkWell(
+                        child: Icon(
+                          DBService.instance.isFavorite(item.globalId)
+                              ? Icons.favorite
+                              : Icons.favorite_border,
+                        ),
+                        onTap: () {
+                          setState(() {
+                            DBService.instance.flipIsFavorite(item.globalId);
+                          });
+                        },
+                      ));
+                }))
       ],
     );
   }
