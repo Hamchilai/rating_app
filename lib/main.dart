@@ -160,7 +160,7 @@ class _MyHomePageState extends State<MyHomePage> {
       return const Text('Main body');
     }
     if (body == Body.teams) {
-      return const ApiItemList<Team>();
+      return const ApiItemListWithSearch<Team>();
     }
     if (body == Body.players) {
       return const ApiItemListWithSearch<Player>();
@@ -175,38 +175,6 @@ class _MyHomePageState extends State<MyHomePage> {
       return const ApiItemListWithSearch<Venue>();
     }
     return const Text('Not reached');
-  }
-}
-
-class PlayerListWithSearch extends StatefulWidget {
-  const PlayerListWithSearch({Key? key}) : super(key: key);
-
-  @override
-  State<PlayerListWithSearch> createState() => _PlayerListWithSearchState();
-}
-
-class _PlayerListWithSearchState extends State<PlayerListWithSearch> {
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: <Widget>[
-        TextField(
-          decoration: InputDecoration(
-            prefixIcon: Icon(Icons.search),
-            hintText: "Surname",
-          ),
-          onTap: () {
-            developer.log('PREVED on tap');
-          },
-          onSubmitted: (String value) {
-            developer.log('PREVED on submitted $value');
-          },
-        ),
-        Expanded(
-          child: ApiItemList<Player>(),
-        )
-      ],
-    );
   }
 }
 
@@ -424,7 +392,7 @@ class TeamsHttpService {
     }
   }
 
-  Map<String, String> getSearchParams<T>(String pattern) {
+  Future<Map<String, String>> getSearchParams<T>(String pattern) async {
     developer.log('PREVED getSearch $pattern');
     Map<String, String> params = {};
     switch (T) {
@@ -435,6 +403,24 @@ class TeamsHttpService {
           params["surname"] = splitted[1];
         } else if (splitted.isNotEmpty) {
           params["surname"] = splitted[0];
+        }
+        break;
+      case Team:
+        final tokens = pattern.split(':').map((e) => e.trim()).toList();
+        if (tokens.isNotEmpty && tokens[0].isNotEmpty) {
+          params["name"] = tokens[0];
+        }
+        if (tokens.length >= 2 && tokens[1].isNotEmpty) {
+          final int? townId = await DBService.instance.findTownId(tokens[1]);
+          if (townId != null) {
+            params["town"] = townId.toString();
+          }
+        }
+        if (tokens.length >= 3 && tokens[2].isNotEmpty) {
+          final int? countryId = await DBService.instance.findCountryId(tokens[2]);
+          if (countryId != null) {
+            params["town.country"] = countryId.toString();
+          }
         }
         break;
       default:
@@ -452,7 +438,7 @@ class TeamsHttpService {
       'itemsPerPage': itemsPerPage.toString()
     };
     if (searchPattern != null) {
-      final searchParams = getSearchParams<T>(searchPattern);
+      final searchParams = await getSearchParams<T>(searchPattern);
       options.addAll(searchParams);
     }
     final response = await http.get(Uri.https(apiAddress, '/$method', options));
@@ -605,6 +591,24 @@ class DBService {
         .then((value) => developer.log('Inserted as $value'));
   }
 
+  Future<int?> findTownId(String name) async {
+    final tableName = apiMethod<Town>();
+    final results = await db.query(tableName, columns : ["town_id"], where: "UPPER(town_name) = UPPER(?)", whereArgs: [name]);
+    if (results.length != 1) {
+      return null;
+    }
+    return results[0]["town_id"] as int;
+  }
+
+  Future<int?> findCountryId(String name) async {
+    final tableName = apiMethod<Country>();
+    final results = await db.query(tableName, columns : ["country_id"], where: "UPPER(country_name) = UPPER(?)", whereArgs: [name]);
+    if (results.length != 1) {
+      return null;
+    }
+    return results[0]["country_id"] as int;
+  }
+
   Future<void> updateCache() async {
     fetchData<Venue>(db);
     fetchData<Town>(db);
@@ -670,7 +674,9 @@ String getHintText<T>() {
     case Venue:
       return "Town";
     case Player:
-      return "[Name ] Surname";
+      return "[Name ]Surname";
+    case Team:
+      return "Name[:Town[:Country]]";
     default:
       return "Name";
   }
