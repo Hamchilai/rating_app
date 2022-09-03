@@ -4,6 +4,11 @@ import 'package:endless/endless.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:developer' as developer;
+import 'dart:async';
+
+import 'package:flutter/widgets.dart';
+import 'package:path/path.dart';
+import 'package:sqflite/sqflite.dart';
 
 void main() {
   runApp(const MyApp());
@@ -55,6 +60,7 @@ class MyHomePage extends StatefulWidget {
 enum Body {
   main,
   teams,
+  players,
   towns,
   countries,
   venues,
@@ -108,6 +114,15 @@ class _MyHomePageState extends State<MyHomePage> {
               },
             ),
             ListTile(
+              title: const Text('Players'),
+              onTap: () {
+                setState(() {
+                  body = Body.players;
+                });
+                Navigator.pop(context); // close the drawer
+              },
+            ),
+            ListTile(
               title: const Text('Towns'),
               onTap: () {
                 setState(() {
@@ -148,6 +163,9 @@ class _MyHomePageState extends State<MyHomePage> {
     if (body == Body.teams) {
       return const ApiItemList<Team>();
     }
+    if (body == Body.players) {
+      return const PlayerListWithSearch();
+    }
     if (body == Body.towns) {
       return const ApiItemList<Town>();
     }
@@ -155,14 +173,46 @@ class _MyHomePageState extends State<MyHomePage> {
       return const ApiItemList<Country>();
     }
     if (body == Body.venues) {
-      return const ApiItemList<Venue>();
+      return const ApiItemListWithSearch<Venue>();
     }
     return const Text('Not reached');
   }
 }
 
+class PlayerListWithSearch extends StatefulWidget {
+  const PlayerListWithSearch({Key? key}) : super(key: key);
+
+  @override
+  State<PlayerListWithSearch> createState() => _PlayerListWithSearchState();
+}
+
+class _PlayerListWithSearchState extends State<PlayerListWithSearch> {
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: <Widget>[
+        TextField(
+          decoration: InputDecoration(
+            prefixIcon: Icon(Icons.search),
+            hintText: "Surname",
+          ),
+          onTap: () {
+            developer.log('PREVED on tap');
+          },
+          onSubmitted: (String value) {
+            developer.log('PREVED on submitted $value');
+          },
+        ),
+        Expanded(
+          child: ApiItemList<Player>(),
+        )
+      ],
+    );
+  }
+}
+
 class ApiItem {
-  final String globalId;
+  //final String globalId;
   final String type;
   final int id;
   final String name;
@@ -170,8 +220,9 @@ class ApiItem {
   String get title => name;
   String get subtitle => 'id: $id';
 
-  ApiItem(Map<String, dynamic> json) :
-        globalId = json['@id'],
+  ApiItem(this.type, this.id, this.name);
+  ApiItem.fromJson(Map<String, dynamic> json) :
+  //globalId = json['@id'],
         type = json['@type'],
         id = json['id'],
         name = json['name'];
@@ -187,6 +238,8 @@ class ApiItem {
     switch (type) {
       case Team.jsonType:
         return Team(json);
+      case Player.jsonType:
+        return Player(json);
       case Town.jsonType:
         return Town(json);
       case Country.jsonType:
@@ -196,33 +249,94 @@ class ApiItem {
     }
     throw Exception("Can't build an item from ${json.toString()}");
   }
+
+  static ApiItem? buildFromDB<T extends ApiItem>(Map<String, Object?> map) {
+    if (T == Venue) {
+      return Venue.fromDB(map);
+    }
+    return null;
+  }
+
+  Map<String, dynamic> toMap() {
+    final prefix = '${type.toLowerCase()}_';
+    return {
+      '${prefix}id' : id,
+      '${prefix}name': name,
+    };
+  }
 }
 
 class Team extends ApiItem {
   static const String jsonType = "Team";
-  final Town? town;
+  late final Town? town;
   Team(Map<String, dynamic> json) :
-        town = ApiItem.maybeBuildFromJson(json['town']) as Town,
-        super(json);
+        super.fromJson(json) {
+    final maybeTown = ApiItem.maybeBuildFromJson(json['town']);
+    if (maybeTown != null) {
+      town = maybeTown as Town;
+    } else {
+      town = null;
+    }
+  }
 
   @override
   String get subtitle => 'id: $id, ${town?.name}, ${town?.country?.name}';
 }
 
+class Player extends ApiItem {
+  static const String jsonType = "Player";
+  final String surname;
+  final String? patronymic;
+  Player(Map<String, dynamic> json) :
+      surname = json['surname'],
+      patronymic = json['patronymic'],
+      super.fromJson(json);
+
+  @override
+  String get title => '$name $surname';
+}
+
 class Town extends ApiItem {
   static const String jsonType = "Town";
-  final Country? country;
+  late final Country? country;
   Town(Map<String, dynamic> json) :
-        country = ApiItem.maybeBuildFromJson(json['country']) as Country,
-        super(json);
+        super.fromJson(json) {
+    final maybeCountry = ApiItem.maybeBuildFromJson(json['country']);
+    if (maybeCountry != null) {
+      country = maybeCountry as Country;
+    } else {
+      country = null;
+    }
+  }
+
+  Town.fromDB(Map<String, Object?> map) : super(jsonType, map['town_id'] as int, map['town_name'] as String) {
+    if (map.containsKey('country_id')) {
+      country = Country.fromDB(map);
+    } else {
+      country = null;
+    }
+  }
 
   @override
   String get subtitle => 'id: $id, ${country?.name}';
+
+  @override
+  Map<String, dynamic> toMap() {
+    var res = super.toMap();
+    if (country != null) {
+      res['country_id'] = country!.id;
+    }
+    return res;
+  }
 }
 
 class Country extends ApiItem {
   static const String jsonType = "Country";
-  Country(Map<String, dynamic> json) : super(json);
+
+  Country(Map<String, dynamic> json) : super.fromJson(json);
+
+  Country.fromDB(Map<String, Object?> map) : super(
+      jsonType, map['country_id'] as int, map['country_name'] as String);
 }
 
 class Venue extends ApiItem {
@@ -230,14 +344,29 @@ class Venue extends ApiItem {
   final Town town;
   Venue(Map<String, dynamic> json) :
         town = ApiItem.maybeBuildFromJson(json['town'])! as Town,
-        super(json);
+        super.fromJson(json);
+
+  Venue.fromDB(Map<String, Object?> map) :
+      town = Town.fromDB(map),
+      super(jsonType, map['venue_id'] as int, map['venue_name'] as String);
+
   @override
   get subtitle => 'id: $id, ${town.name}, ${town.country?.name}';
+
+  @override
+  Map<String, dynamic> toMap() {
+    var res = super.toMap();
+    res['town_id'] = town.id;
+    return res;
+  }
 }
 
 String apiMethod<T>() {
   if (T == Team) {
     return "teams";
+  }
+  if (T == Player) {
+    return "players";
   }
   if (T == Town) {
     return "towns";
@@ -352,6 +481,148 @@ class _ApiItemListState<T extends ApiItem> extends State<ApiItemList<T>> {
             ),
           );
         }
+    );
+  }
+}
+
+class DBService {
+  static late DBService instance = DBService();
+  Database? db;
+
+  Future<void> updateCache() async {
+    final venuesTableName = apiMethod<Venue>();
+    final townsTableName = apiMethod<Town>();
+    final countryTableName = apiMethod<Country>();
+    db = await openDatabase(
+      join(await getDatabasesPath(), "local_cache.db"),
+      onCreate: (db, version) async {
+        developer.log('PREVED onCreate $version');
+        await db.execute(
+            'CREATE TABLE $venuesTableName(id INTEGER PRIMARY KEY, name TEXT, town_id INTEGER)');
+        await db.execute(
+            'CREATE TABLE $townsTableName(id INTEGER PRIMARY KEY, name TEXT, country_id INTEGER)');
+        await db.execute(
+            'CREATE TABLE $countryTableName(id INTEGER PRIMARY KEY, name TEXT)');
+      },
+      onOpen: (db) async {
+        //await db.execute('DROP TABLE $venuesTableName');
+        //await db.execute('DROP TABLE $townsTableName');
+        //await db.execute('DROP TABLE $countryTableName');
+
+        await db.execute(
+            'CREATE TABLE IF NOT EXISTS $venuesTableName(venue_id INTEGER PRIMARY KEY, venue_name TEXT, town_id INTEGER)');
+        await db.execute(
+            'CREATE TABLE IF NOT EXISTS $townsTableName(town_id INTEGER PRIMARY KEY, town_name TEXT, country_id INTEGER)');
+        await db.execute(
+            'CREATE TABLE IF NOT EXISTS $countryTableName(country_id INTEGER PRIMARY KEY, country_name TEXT)');
+      },
+      version: 1,
+    );
+    await fetchData<Venue>(db!);
+    await fetchData<Town>(db!);
+    return fetchData<Country>(db!);
+  }
+  Future<void> fetchData<T extends ApiItem>(Database db) async {
+    final httpService = TeamsHttpService();
+    const int pageSize = 30;
+    final tableName = apiMethod<T>();
+    int count = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM $tableName'))!;
+    developer.log('PREVED $count in $tableName');
+    for (int page = count ~/ pageSize; ; page++) {
+      var data = await httpService.getPage<T>(apiMethod<T>(), page+1, pageSize);
+      Batch batch = db.batch();
+      for (T t in data) {
+        batch.insert(tableName, t.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      await batch.commit(noResult: true);
+      if (data.length < pageSize) {
+        break;
+      }
+    }
+  }
+
+  Future<List<T>> getPage<T extends ApiItem>(int page, int itemsPerPage, String town) async {
+    if (db == null) {
+      await updateCache();
+    }
+    final dbList = await db!.rawQuery('SELECT * FROM venues'
+        ' INNER JOIN towns USING(town_id) LEFT JOIN countries'
+        ' USING(country_id)'
+        ' WHERE INSTR(UPPER(venue_name), UPPER(?)) > 0'
+        ' OR INSTR(UPPER(town_name), UPPER(?)) > 0'
+        ' OR INSTR(UPPER(country_name), UPPER(?)) > 0'
+        ' LIMIT ?,?',
+        [town, town, town, page*itemsPerPage, itemsPerPage]);
+    return dbList.map((e) => ApiItem.buildFromDB<T>(e) as T).toList();
+  }
+}
+
+class ApiItemListWithSearch<T extends ApiItem> extends StatefulWidget {
+  const ApiItemListWithSearch({Key? key}) : super(key: key);
+
+  @override
+  State<ApiItemListWithSearch<T>> createState() => _ApiItemListWithSearchState<T>();
+}
+
+class _ApiItemListWithSearchState<T extends ApiItem> extends State<ApiItemListWithSearch<T>> {
+  String town = "";
+  static const pageSize = 30;
+  final EndlessPaginationController<T> controller = EndlessPaginationController();
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: <Widget>[
+        TextField(
+          decoration: const InputDecoration(
+            prefixIcon: Icon(Icons.search),
+            hintText: "Town",
+          ),
+          onTap: () {
+            developer.log('PREVED on tap');
+          },
+          onSubmitted: (String value) {
+            developer.log('PREVED on submitted $value');
+          },
+          onChanged: (String value) {
+            if (town == value.trim()) {
+              return;
+            }
+            setState(() {
+              town = value.trim();
+              controller.reload();
+            });
+            developer.log('PREVED on changed $value');
+          },
+        ),
+        Expanded(
+            child: EndlessPaginationListView<T>(
+                loadMore: (pageIndex) {
+                  return DBService.instance.getPage<T>(pageIndex, pageSize, town);
+                },
+                paginationDelegate: EndlessPaginationDelegate(
+                  pageSize: pageSize,
+                ),
+                controller: controller,
+                itemBuilder: (context,
+                    {
+                      required item,
+                      required index,
+                      required totalItems,
+                    }
+                    ) {
+                  return ListTile(
+                    title: Text(
+                      item.title,
+                      //style: _biggerFont,
+                    ),
+                    subtitle: Text(
+                      item.subtitle,
+                    ),
+                  );
+                }
+            )
+        )
+      ],
     );
   }
 }
