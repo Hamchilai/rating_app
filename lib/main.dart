@@ -164,7 +164,7 @@ class _MyHomePageState extends State<MyHomePage> {
       return const ApiItemList<Team>();
     }
     if (body == Body.players) {
-      return const PlayerListWithSearch();
+      return const ApiItemListWithSearch<Player>();
     }
     if (body == Body.towns) {
       return const ApiItemList<Town>();
@@ -381,6 +381,8 @@ String apiMethod<T>() {
 }
 
 class TeamsHttpService {
+  static TeamsHttpService instance = TeamsHttpService();
+
   static const apiAddress = 'api.rating.chgk.net';
   static const apiUrl = 'https://$apiAddress';
   static const hydraViewKey = 'hydra:view';
@@ -401,9 +403,34 @@ class TeamsHttpService {
     }
   }
 
-  Future<List<T>> getPage<T extends ApiItem>(String method, int page, int itemsPerPage) async {
-    final response = await http.get(Uri.https(apiAddress, '/$method',
-        {'page': page.toString(), 'itemsPerPage' : itemsPerPage.toString()}));
+  Map<String, String> getSearchParams<T>(String pattern) {
+    developer.log('PREVED getSearch $pattern');
+    Map<String, String> params = {};
+    switch (T) {
+      case Player:
+        final splitted = pattern.split(' ');
+        if (splitted.length >= 2) {
+          params["name"] = splitted[0];
+          params["surname"] = splitted[1];
+        } else if (splitted.isNotEmpty) {
+          params["surname"] = splitted[0];
+        }
+        break;
+      default:
+        throw Exception("Not reached in getSearchParams ${apiMethod<T>()}");
+    }
+    developer.log('PREVED getSearch ${params.toString()}');
+    return params;
+  }
+
+  Future<List<T>> getPage<T extends ApiItem>(String method, int page, int itemsPerPage, {String? searchPattern}) async {
+    var options = {'page': page.toString(), 'itemsPerPage' : itemsPerPage.toString()};
+    if (searchPattern != null) {
+      final searchParams = getSearchParams<T>(searchPattern);
+      options.addAll(searchParams);
+    }
+    final response = await http.get(Uri.https(apiAddress, '/$method', options));
+
     if (response.statusCode != 200) {
       throw Exception('Failed to load $method');
     }
@@ -451,7 +478,6 @@ class ApiItemList<T extends ApiItem> extends StatefulWidget {
 }
 
 class _ApiItemListState<T extends ApiItem> extends State<ApiItemList<T>> {
-  final teamHttpService = TeamsHttpService();
   static const pageSize = 30;
   static const _biggerFont = const TextStyle(fontSize: 18);
 
@@ -459,7 +485,7 @@ class _ApiItemListState<T extends ApiItem> extends State<ApiItemList<T>> {
   Widget build(BuildContext context) {
     return EndlessPaginationListView<T>(
         loadMore: (pageIndex) {
-          return teamHttpService.getPage<T>(apiMethod<T>(), pageIndex + 1, pageSize);
+          return TeamsHttpService.instance.getPage<T>(apiMethod<T>(), pageIndex + 1, pageSize);
         },
         paginationDelegate: EndlessPaginationDelegate(
           pageSize: pageSize,
@@ -486,7 +512,7 @@ class _ApiItemListState<T extends ApiItem> extends State<ApiItemList<T>> {
 }
 
 class DBService {
-  static late DBService instance = DBService();
+  static DBService instance = DBService();
   Database? db;
 
   Future<void> updateCache() async {
@@ -523,7 +549,7 @@ class DBService {
     return fetchData<Country>(db!);
   }
   Future<void> fetchData<T extends ApiItem>(Database db) async {
-    final httpService = TeamsHttpService();
+    final httpService = TeamsHttpService.instance;
     const int pageSize = 30;
     final tableName = apiMethod<T>();
     int count = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM $tableName'))!;
@@ -564,8 +590,19 @@ class ApiItemListWithSearch<T extends ApiItem> extends StatefulWidget {
   State<ApiItemListWithSearch<T>> createState() => _ApiItemListWithSearchState<T>();
 }
 
+String getHintText<T>() {
+  switch (T) {
+    case Venue:
+      return "Town";
+    case Player:
+      return "[Name ] Surname";
+    default:
+      return "Name";
+  }
+}
+
 class _ApiItemListWithSearchState<T extends ApiItem> extends State<ApiItemListWithSearch<T>> {
-  String town = "";
+  String? searchPattern;
   static const pageSize = 30;
   final EndlessPaginationController<T> controller = EndlessPaginationController();
   @override
@@ -573,17 +610,23 @@ class _ApiItemListWithSearchState<T extends ApiItem> extends State<ApiItemListWi
     return Column(
       children: <Widget>[
         TextField(
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             prefixIcon: Icon(Icons.search),
-            hintText: "Town",
+            hintText: getHintText<T>(),
           ),
           onTap: () {
             developer.log('PREVED on tap');
           },
           onSubmitted: (String value) {
             developer.log('PREVED on submitted $value');
+            if (searchPattern == value.trim()) {
+              return;
+            }
+            searchPattern = value.trim();
+            controller.reload();
           },
           onChanged: (String value) {
+            /*
             if (town == value.trim()) {
               return;
             }
@@ -591,13 +634,18 @@ class _ApiItemListWithSearchState<T extends ApiItem> extends State<ApiItemListWi
               town = value.trim();
               controller.reload();
             });
+             */
             developer.log('PREVED on changed $value');
           },
         ),
         Expanded(
             child: EndlessPaginationListView<T>(
                 loadMore: (pageIndex) {
-                  return DBService.instance.getPage<T>(pageIndex, pageSize, town);
+                  if (T == Venue) {
+                    return DBService.instance.getPage<T>(
+                        pageIndex, pageSize, searchPattern ?? "");
+                  }
+                  return TeamsHttpService.instance.getPage(apiMethod<T>(), pageIndex + 1, pageSize, searchPattern: searchPattern);
                 },
                 paginationDelegate: EndlessPaginationDelegate(
                   pageSize: pageSize,
