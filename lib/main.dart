@@ -2,11 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:endless/endless.dart';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:developer' as developer;
 import 'dart:async';
 
-import 'package:flutter/widgets.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
@@ -198,7 +196,9 @@ class ApiItem {
       : globalId = json['@id'],
         type = json['@type'],
         id = json['id'],
-        name = json['name'];
+        name = json['name'] {
+    assert(globalId == generateGlobalId(type, id));
+  }
 
   static ApiItem? maybeBuildFromJson(Map<String, dynamic>? json) {
     if (json == null) {
