@@ -369,13 +369,13 @@ String apiMethodFromString(String type) {
   throw Exception("Not reached with type $type");
 }
 
-class TeamsHttpService {
-  static TeamsHttpService instance = TeamsHttpService();
-
+class APILoader {
   static const apiAddress = 'api.rating.chgk.net';
   static const apiUrl = 'https://$apiAddress';
   static const hydraViewKey = 'hydra:view';
   static const hydraNextKey = 'hydra:next';
+  static const int kItemsPerPage = 50;
+  /*
   Future<List<Team>> listTeams() async {
     final response = await http.get(Uri.https('api.rating.chgk.net', '/teams',
         {'page': '1', 'itemsPerPage': '70', 'town': '205'}));
@@ -391,22 +391,22 @@ class TeamsHttpService {
       throw Exception('Failed to load teams');
     }
   }
+   */
 
-  Future<Map<String, String>> getSearchParams<T>(String pattern) async {
-    developer.log('PREVED getSearch $pattern');
+  static Future<Map<String, String>> getSearchParams<T>(String pattern) async {
     Map<String, String> params = {};
     switch (T) {
       case Player:
-        final splitted = pattern.split(' ');
-        if (splitted.length >= 2) {
-          params["name"] = splitted[0];
-          params["surname"] = splitted[1];
-        } else if (splitted.isNotEmpty) {
-          params["surname"] = splitted[0];
+        final tokens = pattern.split(' ');
+        if (tokens.length >= 2) {
+          params["name"] = tokens[0];
+          params["surname"] = tokens[1];
+        } else if (tokens.isNotEmpty) {
+          params["surname"] = tokens[0];
         }
         break;
       case Team:
-        final tokens = pattern.split(':').map((e) => e.trim()).toList();
+        final tokens = pattern.split(';').map((e) => e.trim()).toList();
         if (tokens.isNotEmpty && tokens[0].isNotEmpty) {
           params["name"] = tokens[0];
         }
@@ -414,12 +414,12 @@ class TeamsHttpService {
           final int? townId = await DBService.instance.findTownId(tokens[1]);
           if (townId != null) {
             params["town"] = townId.toString();
-          }
-        }
-        if (tokens.length >= 3 && tokens[2].isNotEmpty) {
-          final int? countryId = await DBService.instance.findCountryId(tokens[2]);
-          if (countryId != null) {
-            params["town.country"] = countryId.toString();
+          } else {
+            final int? countryId =
+                await DBService.instance.findCountryId(tokens[1]);
+            if (countryId != null) {
+              params["town.country"] = countryId.toString();
+            }
           }
         }
         break;
@@ -430,12 +430,18 @@ class TeamsHttpService {
     return params;
   }
 
-  Future<List<T>> getPage<T extends ApiItem>(
-      String method, int page, int itemsPerPage,
+  static Future<List<T>> getPage<T extends ApiItem>(int page,
       {String? searchPattern}) async {
+    final loader = await getLazyApiLoader<T>(page);
+    return loader.data;
+  }
+
+  static Future<LazyApiLoader<T>> getLazyApiLoader<T extends ApiItem>(int page,
+      {String? searchPattern}) async {
+    final String method = apiMethod<T>();
     var options = {
       'page': page.toString(),
-      'itemsPerPage': itemsPerPage.toString()
+      'itemsPerPage': kItemsPerPage.toString()
     };
     if (searchPattern != null) {
       final searchParams = await getSearchParams<T>(searchPattern);
@@ -444,14 +450,16 @@ class TeamsHttpService {
     final response = await http.get(Uri.https(apiAddress, '/$method', options));
 
     if (response.statusCode != 200) {
-      throw Exception('Failed to load $method');
+      throw Exception('Failed to load $method: ${response.reasonPhrase}');
     }
     final result = json.decode(response.body);
-    return List.generate(result['hydra:member'].length, (i) {
+    List<T> data = List.generate(result['hydra:member'].length, (i) {
       return ApiItem.maybeBuildFromJson(result['hydra:member'][i])! as T;
     });
+    return LazyApiLoader<T>(data, result['hydra:totalItems']);
   }
 
+  /*
   Stream<ApiItem> ratingStream(String path) async* {
     final response = await http.get(Uri.parse(apiUrl + path));
     if (response.statusCode != 200) {
@@ -480,6 +488,7 @@ class TeamsHttpService {
       yield item as Town;
     }
   }
+   */
 }
 
 class ApiItemList<T extends ApiItem> extends StatefulWidget {
@@ -490,18 +499,16 @@ class ApiItemList<T extends ApiItem> extends StatefulWidget {
 }
 
 class _ApiItemListState<T extends ApiItem> extends State<ApiItemList<T>> {
-  static const pageSize = 30;
   static const _biggerFont = const TextStyle(fontSize: 18);
 
   @override
   Widget build(BuildContext context) {
     return EndlessPaginationListView<T>(
         loadMore: (pageIndex) {
-          return TeamsHttpService.instance
-              .getPage<T>(apiMethod<T>(), pageIndex + 1, pageSize);
+          return APILoader.getPage<T>(pageIndex + 1);
         },
         paginationDelegate: EndlessPaginationDelegate(
-          pageSize: pageSize,
+          pageSize: APILoader.kItemsPerPage,
         ),
         itemBuilder: (
           context, {
@@ -566,7 +573,8 @@ class DBService {
           final favs = await db.query(kFavoritesTable);
           for (final fav in favs) {
             developer.log('load favorites ${fav.toString()}');
-            favorites[fav["global_id"] as String] = (fav["is_favorite"] as int) == 1;
+            favorites[fav["global_id"] as String] =
+                (fav["is_favorite"] as int) == 1;
           }
         }
       },
@@ -585,15 +593,27 @@ class DBService {
 
   Future<void> flipIsFavorite(String globalId) async {
     favorites[globalId] = !isFavorite(globalId);
-    db.insert(kFavoritesTable,
-            {"global_id": globalId, "is_favorite": isFavorite(globalId) ? 1 : 0},
+    db
+        .insert(
+            kFavoritesTable,
+            {
+              "global_id": globalId,
+              "is_favorite": isFavorite(globalId) ? 1 : 0
+            },
             conflictAlgorithm: ConflictAlgorithm.replace)
         .then((value) => developer.log('Inserted as $value'));
   }
 
+  Future<List<T>> fetchFavorites<T extends ApiItem>() async {
+    return [];
+  }
+
   Future<int?> findTownId(String name) async {
     final tableName = apiMethod<Town>();
-    final results = await db.query(tableName, columns : ["town_id"], where: "UPPER(town_name) = UPPER(?)", whereArgs: [name]);
+    final results = await db.query(tableName,
+        columns: ["town_id"],
+        where: "UPPER(town_name) = UPPER(?)",
+        whereArgs: [name]);
     if (results.length != 1) {
       return null;
     }
@@ -602,7 +622,10 @@ class DBService {
 
   Future<int?> findCountryId(String name) async {
     final tableName = apiMethod<Country>();
-    final results = await db.query(tableName, columns : ["country_id"], where: "UPPER(country_name) = UPPER(?)", whereArgs: [name]);
+    final results = await db.query(tableName,
+        columns: ["country_id"],
+        where: "UPPER(country_name) = UPPER(?)",
+        whereArgs: [name]);
     if (results.length != 1) {
       return null;
     }
@@ -616,22 +639,19 @@ class DBService {
   }
 
   Future<void> fetchData<T extends ApiItem>(Database db) async {
-    final httpService = TeamsHttpService.instance;
-    const int pageSize = 30;
     final tableName = apiMethod<T>();
     int count = Sqflite.firstIntValue(
         await db.rawQuery('SELECT COUNT(*) FROM $tableName'))!;
     developer.log('PREVED $count in $tableName');
-    for (int page = count ~/ pageSize;; page++) {
-      var data =
-          await httpService.getPage<T>(apiMethod<T>(), page + 1, pageSize);
+    for (int page = count ~/ APILoader.kItemsPerPage;; page++) {
+      var data = await APILoader.getPage<T>(page + 1);
       Batch batch = db.batch();
       for (T t in data) {
         batch.insert(tableName, t.toMap(),
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
       await batch.commit(noResult: true);
-      if (data.length < pageSize) {
+      if (data.length < APILoader.kItemsPerPage) {
         break;
       }
     }
@@ -676,7 +696,7 @@ String getHintText<T>() {
     case Player:
       return "[Name ]Surname";
     case Team:
-      return "Name[:Town[:Country]]";
+      return "Name[;Town or Country]";
     default:
       return "Name";
   }
@@ -685,9 +705,24 @@ String getHintText<T>() {
 class _ApiItemListWithSearchState<T extends ApiItem>
     extends State<ApiItemListWithSearch<T>> {
   String? searchPattern;
-  static const pageSize = 30;
-  final EndlessPaginationController<T> controller =
-      EndlessPaginationController();
+  late ScrollController controller;
+  List<T> items = [];
+
+  @override
+  void initState() {
+    super.initState();
+    controller = ScrollController();
+    controller.addListener(_scrollListener);
+  }
+
+  @override
+  void dispose() {
+    controller.removeListener(_scrollListener);
+    super.dispose();
+  }
+
+  void _scrollListener() {}
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -705,8 +740,9 @@ class _ApiItemListWithSearchState<T extends ApiItem>
             if (searchPattern == value.trim()) {
               return;
             }
-            searchPattern = value.trim();
-            controller.reload();
+            setState(() {
+              searchPattern = value.trim();
+            });
           },
           onChanged: (String value) {
             /*
@@ -721,6 +757,8 @@ class _ApiItemListWithSearchState<T extends ApiItem>
             developer.log('PREVED on changed $value');
           },
         ),
+        SearchResults<T>(searchPattern: searchPattern)
+        /*
         Expanded(
             child: EndlessPaginationListView<T>(
                 loadMore: (pageIndex) {
@@ -763,7 +801,128 @@ class _ApiItemListWithSearchState<T extends ApiItem>
                         },
                       ));
                 }))
+
+         */
       ],
+    );
+  }
+}
+
+class LazyApiLoader<T extends ApiItem> {
+  String? searchPattern;
+  List<T> data;
+  int totalItems;
+
+  LazyApiLoader(this.data, this.totalItems, {this.searchPattern});
+
+  Future<void> _fetchData() async {
+    int nextPage = data.length ~/ APILoader.kItemsPerPage + 1;
+    developer.log('PREVED fetchdata at $nextPage');
+    final nextBatch =
+        await APILoader.getPage<T>(nextPage, searchPattern: searchPattern);
+    data.addAll(nextBatch);
+  }
+
+  Future<T?> getAt(int index) async {
+    if (index < 0 || index >= totalItems) {
+      return null;
+    }
+    while (index >= data.length) {
+      await _fetchData();
+    }
+    return data[index];
+  }
+}
+
+class StreamLoader<T extends ApiItem> {
+  late final StreamController<T> _controller;
+  int page = 1;
+  String? searchPattern;
+  StreamLoader({this.searchPattern}) {
+    _controller = StreamController<T>(onListen: _loadData, onResume: _loadData);
+  }
+
+  Stream<T> get stream => _controller.stream;
+
+  void _loadData() async {
+    while (!_controller.isClosed && !_controller.isPaused) {
+      final nextBatch =
+          await APILoader.getPage<T>(page++, searchPattern: searchPattern);
+      for (final item in nextBatch) {
+        _controller.add(item as T);
+      }
+      if (nextBatch.length < APILoader.kItemsPerPage) {
+        await _controller.close();
+      }
+    }
+  }
+}
+
+class SearchResults<T extends ApiItem> extends StatefulWidget {
+  final String? searchPattern;
+  const SearchResults({super.key, this.searchPattern});
+
+  @override
+  State<StatefulWidget> createState() {
+    return _SearchResultsState<T>();
+  }
+}
+
+class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
+  List<T> items = [];
+  int page = 1;
+  int more = 1;
+  bool isLoading = false;
+
+  void _updateItems(List<T> newItems) {
+    setState(() {
+      items.addAll(newItems);
+      more = newItems.length == APILoader.kItemsPerPage ? 1 : 0;
+      isLoading = false;
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    isLoading = true;
+    APILoader.getPage<T>(page++, searchPattern: widget.searchPattern)
+        .then(_updateItems);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.length + more == 0) {
+      return const Text("No search results");
+    }
+    developer.log('length ${items.length} ');
+    return Expanded(child: ListView.builder(
+        itemCount: items.length + more,
+        itemBuilder: (context, index) {
+          if (!isLoading && more > 0 && index + 10 > items.length) {
+            isLoading = true;
+            APILoader.getPage<T>(page++, searchPattern: widget.searchPattern)
+                .then(_updateItems);
+          }
+          developer.log('$index');
+          if (index < items.length) {
+            return SingleApiItem<T>(item: items[index]);
+          }
+          return Center(child: CircularProgressIndicator());
+        }),
+    );
+  }
+}
+
+class SingleApiItem<T extends ApiItem> extends StatelessWidget {
+  final T item;
+  const SingleApiItem({super.key, required this.item});
+
+  @override
+  Widget build(context) {
+    return ListTile(
+      title: Text(item.title),
+      subtitle: Text(item.subtitle),
     );
   }
 }
