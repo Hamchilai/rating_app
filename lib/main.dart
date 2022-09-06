@@ -432,7 +432,7 @@ class APILoader {
 
   static Future<List<T>> getPage<T extends ApiItem>(int page,
       {String? searchPattern}) async {
-    final loader = await getLazyApiLoader<T>(page);
+    final loader = await getLazyApiLoader<T>(page, searchPattern: searchPattern);
     return loader.data;
   }
 
@@ -443,7 +443,7 @@ class APILoader {
       'page': page.toString(),
       'itemsPerPage': kItemsPerPage.toString()
     };
-    if (searchPattern != null) {
+    if (searchPattern != null && searchPattern.isNotEmpty) {
       final searchParams = await getSearchParams<T>(searchPattern);
       options.addAll(searchParams);
     }
@@ -704,24 +704,8 @@ String getHintText<T>() {
 
 class _ApiItemListWithSearchState<T extends ApiItem>
     extends State<ApiItemListWithSearch<T>> {
-  String? searchPattern;
-  late ScrollController controller;
-  List<T> items = [];
 
-  @override
-  void initState() {
-    super.initState();
-    controller = ScrollController();
-    controller.addListener(_scrollListener);
-  }
-
-  @override
-  void dispose() {
-    controller.removeListener(_scrollListener);
-    super.dispose();
-  }
-
-  void _scrollListener() {}
+  final ValueNotifier<String> searchPatternNotifier = ValueNotifier<String>("");
 
   @override
   Widget build(BuildContext context) {
@@ -737,12 +721,7 @@ class _ApiItemListWithSearchState<T extends ApiItem>
           },
           onSubmitted: (String value) {
             developer.log('PREVED on submitted $value');
-            if (searchPattern == value.trim()) {
-              return;
-            }
-            setState(() {
-              searchPattern = value.trim();
-            });
+            searchPatternNotifier.value = value.trim();
           },
           onChanged: (String value) {
             /*
@@ -757,7 +736,7 @@ class _ApiItemListWithSearchState<T extends ApiItem>
             developer.log('PREVED on changed $value');
           },
         ),
-        SearchResults<T>(searchPattern: searchPattern)
+        SearchResults<T>(searchPattern: searchPatternNotifier),
         /*
         Expanded(
             child: EndlessPaginationListView<T>(
@@ -859,8 +838,8 @@ class StreamLoader<T extends ApiItem> {
 }
 
 class SearchResults<T extends ApiItem> extends StatefulWidget {
-  final String? searchPattern;
-  const SearchResults({super.key, this.searchPattern});
+  final ValueNotifier<String> searchPattern;
+  const SearchResults({super.key, required this.searchPattern});
 
   @override
   State<StatefulWidget> createState() {
@@ -872,22 +851,44 @@ class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
   List<T> items = [];
   int page = 1;
   int more = 1;
-  bool isLoading = false;
+  StreamSubscription<List<T>>? dataSub;
 
   void _updateItems(List<T> newItems) {
     setState(() {
+      dataSub?.cancel();
+      dataSub = null;
       items.addAll(newItems);
       more = newItems.length == APILoader.kItemsPerPage ? 1 : 0;
-      isLoading = false;
     });
+  }
+
+  void _loadMore() {
+    dataSub?.cancel();
+    dataSub = APILoader.getPage<T>(page++, searchPattern: widget.searchPattern.value).asStream().listen(_updateItems);
   }
 
   @override
   void initState() {
     super.initState();
-    isLoading = true;
-    APILoader.getPage<T>(page++, searchPattern: widget.searchPattern)
-        .then(_updateItems);
+    _loadMore();
+    widget.searchPattern.addListener(resetState);
+  }
+
+  void resetState() {
+    setState(() {
+      items = [];
+      page = 1;
+      more = 1;
+      _loadMore();
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.searchPattern.removeListener(resetState);
+    dataSub?.cancel();
+
+    super.dispose();
   }
 
   @override
@@ -899,10 +900,8 @@ class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
     return Expanded(child: ListView.builder(
         itemCount: items.length + more,
         itemBuilder: (context, index) {
-          if (!isLoading && more > 0 && index + 10 > items.length) {
-            isLoading = true;
-            APILoader.getPage<T>(page++, searchPattern: widget.searchPattern)
-                .then(_updateItems);
+          if (dataSub == null && more > 0 && index + 10 > items.length) {
+            _loadMore();
           }
           developer.log('$index');
           if (index < items.length) {
