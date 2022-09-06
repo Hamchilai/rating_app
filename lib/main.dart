@@ -913,15 +913,34 @@ class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
   }
 }
 
-class SingleApiItem<T extends ApiItem> extends StatelessWidget {
+class SingleApiItem<T extends ApiItem> extends StatefulWidget {
   final T item;
   const SingleApiItem({super.key, required this.item});
 
   @override
+  State<StatefulWidget> createState() {
+    return _SingleApiItemState<T>();
+  }
+}
+
+class _SingleApiItemState<T extends ApiItem> extends State<SingleApiItem<T>> {
+  @override
   Widget build(context) {
     return ListTile(
-      title: Text(item.title),
-      subtitle: Text(item.subtitle),
+        title: Text(widget.item.title),
+        subtitle: Text(widget.item.subtitle),
+        trailing: InkWell(
+          child: Icon(
+            DBService.instance.isFavorite(widget.item.globalId)
+                ? Icons.favorite
+                : Icons.favorite_border,
+          ),
+          onTap: () {
+            setState(() {
+              DBService.instance.flipIsFavorite(widget.item.globalId);
+            });
+          },
+        )
     );
   }
 }
