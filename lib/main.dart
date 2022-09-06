@@ -158,10 +158,10 @@ class _MyHomePageState extends State<MyHomePage> {
       return const Text('Main body');
     }
     if (body == Body.teams) {
-      return const ApiItemListWithSearch<Team>();
+      return ApiItemListWithSearch<Team>();
     }
     if (body == Body.players) {
-      return const ApiItemListWithSearch<Player>();
+      return ApiItemListWithSearch<Player>();
     }
     if (body == Body.towns) {
       return const ApiItemList<Town>();
@@ -170,7 +170,7 @@ class _MyHomePageState extends State<MyHomePage> {
       return const ApiItemList<Country>();
     }
     if (body == Body.venues) {
-      return const ApiItemListWithSearch<Venue>();
+      return ApiItemListWithSearch<Venue>();
     }
     return const Text('Not reached');
   }
@@ -681,14 +681,6 @@ class DBService {
   }
 }
 
-class ApiItemListWithSearch<T extends ApiItem> extends StatefulWidget {
-  const ApiItemListWithSearch({Key? key}) : super(key: key);
-
-  @override
-  State<ApiItemListWithSearch<T>> createState() =>
-      _ApiItemListWithSearchState<T>();
-}
-
 String getHintText<T>() {
   switch (T) {
     case Venue:
@@ -702,8 +694,8 @@ String getHintText<T>() {
   }
 }
 
-class _ApiItemListWithSearchState<T extends ApiItem>
-    extends State<ApiItemListWithSearch<T>> {
+class ApiItemListWithSearch<T extends ApiItem> extends StatelessWidget {
+  ApiItemListWithSearch({super.key});
 
   final ValueNotifier<String> searchPatternNotifier = ValueNotifier<String>("");
 
