@@ -459,6 +459,16 @@ class APILoader {
     return LazyApiLoader<T>(data, result['hydra:totalItems']);
   }
 
+  static Future<ApiItem> getByGlobalId(String globalId) async {
+    developer.log('get by global id $globalId');
+    final response = await http.get(Uri.https(apiAddress, '$globalId'));
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load $globalId: ${response.reasonPhrase}');
+    }
+    final result = json.decode(response.body);
+    return ApiItem.maybeBuildFromJson(result)!;
+  }
+
   /*
   Stream<ApiItem> ratingStream(String path) async* {
     final response = await http.get(Uri.parse(apiUrl + path));
@@ -605,7 +615,27 @@ class DBService {
   }
 
   Future<List<T>> fetchFavorites<T extends ApiItem>() async {
-    return [];
+    List<T> res = [];
+    for (final globalId in favorites.keys) {
+    developer.log('fetchFavorites $globalId');
+    if (!globalId.contains(apiMethod<T>())) {
+        continue;
+      }
+      T item = await APILoader.getByGlobalId(globalId) as T;
+      res.add(item);
+    }
+    return res;
+  }
+
+  List<String> getFavoritesIds<T extends ApiItem>() {
+    List<String> res = [];
+    for (final globalId in favorites.keys) {
+      if (!globalId.contains(apiMethod<T>())) {
+        continue;
+      }
+      res.add(globalId);
+    }
+    return res;
   }
 
   Future<int?> findTownId(String name) async {
@@ -705,7 +735,7 @@ class ApiItemListWithSearch<T extends ApiItem> extends StatelessWidget {
       children: <Widget>[
         TextField(
           decoration: InputDecoration(
-            prefixIcon: Icon(Icons.search),
+            prefixIcon: const Icon(Icons.search),
             hintText: getHintText<T>(),
           ),
           onTap: () {
@@ -840,6 +870,8 @@ class SearchResults<T extends ApiItem> extends StatefulWidget {
 }
 
 class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
+  List<String> favoritesIds = [];
+
   List<T> items = [];
   int page = 1;
   int more = 1;
@@ -862,6 +894,7 @@ class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
   @override
   void initState() {
     super.initState();
+    favoritesIds = DBService.instance.getFavoritesIds<T>();
     _loadMore();
     widget.searchPattern.addListener(resetState);
   }
@@ -885,22 +918,50 @@ class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
 
   @override
   Widget build(BuildContext context) {
-    if (items.length + more == 0) {
+    final totalLength = favoritesIds.length + items.length + more;
+    if (totalLength == 0) {
       return const Text("No search results");
     }
     developer.log('length ${items.length} ');
     return Expanded(child: ListView.builder(
-        itemCount: items.length + more,
+        itemCount: totalLength,
         itemBuilder: (context, index) {
-          if (dataSub == null && more > 0 && index + 10 > items.length) {
+          if (dataSub == null && more > 0 && index + 10 > totalLength) {
             _loadMore();
           }
           developer.log('$index');
+          if (index < favoritesIds.length) {
+            return SingleLoadingItem(globalId: favoritesIds[index]);
+          }
+          index -= favoritesIds.length;
           if (index < items.length) {
             return SingleApiItem<T>(item: items[index]);
           }
           return Center(child: CircularProgressIndicator());
         }),
+    );
+  }
+}
+
+class SingleLoadingItem<T extends ApiItem> extends StatelessWidget {
+  final String globalId;
+  late final Future<T> item;
+  SingleLoadingItem({super.key, required this.globalId}) {
+    item = APILoader.getByGlobalId(globalId) as Future<T>;
+  }
+  @override
+  Widget build(context) {
+    return FutureBuilder<T>(
+      future: item,
+      builder: (context, snapshot) {
+        if (snapshot.hasData) {
+          return SingleApiItem(item: snapshot.requireData);
+        }
+        if (snapshot.hasError) {
+          return Text('${snapshot.error}');
+        }
+        return const Center(child: CircularProgressIndicator());
+      }
     );
   }
 }
