@@ -617,8 +617,8 @@ class DBService {
   Future<List<T>> fetchFavorites<T extends ApiItem>() async {
     List<T> res = [];
     for (final globalId in favorites.keys) {
-    developer.log('fetchFavorites $globalId');
-    if (!globalId.contains(apiMethod<T>())) {
+      developer.log('fetchFavorites $globalId');
+      if (!globalId.contains(apiMethod<T>())) {
         continue;
       }
       T item = await APILoader.getByGlobalId(globalId) as T;
@@ -870,7 +870,7 @@ class SearchResults<T extends ApiItem> extends StatefulWidget {
 }
 
 class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
-  List<String> favoritesIds = [];
+  List<T> favorites = [];
 
   List<T> items = [];
   int page = 1;
@@ -894,7 +894,11 @@ class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
   @override
   void initState() {
     super.initState();
-    favoritesIds = DBService.instance.getFavoritesIds<T>();
+    DBService.instance.fetchFavorites<T>().then((value) {
+      setState(() {
+        favorites = value;
+      });
+    });
     _loadMore();
     widget.searchPattern.addListener(resetState);
   }
@@ -918,7 +922,7 @@ class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
 
   @override
   Widget build(BuildContext context) {
-    final totalLength = favoritesIds.length + items.length + more;
+    final totalLength = favorites.length + items.length + more;
     if (totalLength == 0) {
       return const Text("No search results");
     }
@@ -930,10 +934,11 @@ class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
             _loadMore();
           }
           developer.log('$index');
-          if (index < favoritesIds.length) {
-            return SingleLoadingItem(globalId: favoritesIds[index]);
+          if (index < favorites.length) {
+            return SingleApiItem<T>(item: favorites[index]);
           }
-          index -= favoritesIds.length;
+          index -= favorites.length;
+
           if (index < items.length) {
             return SingleApiItem<T>(item: items[index]);
           }
