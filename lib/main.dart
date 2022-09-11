@@ -177,6 +177,11 @@ class _MyHomePageState extends State<MyHomePage> {
 }
 
 class ApiItem {
+  static const kGlobalIdKey = '@id';
+  static const kTypeKey = '@type';
+  static const kIdKey = 'id';
+  static const kNameKey = 'name';
+
   late final String globalId;
   final String type;
   final int id;
@@ -193,11 +198,19 @@ class ApiItem {
     globalId = generateGlobalId(type, id);
   }
   ApiItem.fromJson(Map<String, dynamic> json)
-      : globalId = json['@id'],
-        type = json['@type'],
-        id = json['id'],
-        name = json['name'] {
+      : globalId = json[kGlobalIdKey],
+        type = json[kTypeKey],
+        id = json[kIdKey],
+        name = json[kNameKey] {
     assert(globalId == generateGlobalId(type, id));
+  }
+  Map<String, dynamic> toJson() {
+    return {
+      kGlobalIdKey: globalId,
+      kTypeKey: type,
+      kIdKey: id,
+      kNameKey: name,
+    };
   }
 
   static ApiItem? maybeBuildFromJson(Map<String, dynamic>? json) {
@@ -240,10 +253,11 @@ class ApiItem {
 }
 
 class Team extends ApiItem {
+  static const kTownKey = 'town';
   static const String jsonType = "Team";
   late final Town? town;
   Team(Map<String, dynamic> json) : super.fromJson(json) {
-    final maybeTown = ApiItem.maybeBuildFromJson(json['town']);
+    final maybeTown = ApiItem.maybeBuildFromJson(json[kTownKey]);
     if (maybeTown != null) {
       town = maybeTown as Town;
     } else {
@@ -253,22 +267,44 @@ class Team extends ApiItem {
 
   @override
   String get subtitle => 'id: $id, ${town?.name}, ${town?.country?.name}';
+
+  @override
+  Map<String, dynamic> toJson() {
+    var res = super.toJson();
+    if (town != null) {
+      res[kTownKey] = town!.toJson();
+    }
+    return res;
+  }
 }
 
 class Player extends ApiItem {
+  static const kSurnameKey = 'surname';
+  static const kPatronymicKey = 'patronymic';
   static const String jsonType = "Player";
   final String surname;
   final String? patronymic;
   Player(Map<String, dynamic> json)
-      : surname = json['surname'],
-        patronymic = json['patronymic'],
+      : surname = json[kSurnameKey],
+        patronymic = json[kPatronymicKey],
         super.fromJson(json);
 
   @override
   String get title => '$name $surname';
+
+  @override
+  Map<String, dynamic> toJson() {
+    var res = super.toJson();
+    res[kSurnameKey] = surname;
+    if (patronymic != null) {
+      res[kPatronymicKey] = patronymic!;
+    }
+    return res;
+  }
 }
 
 class Town extends ApiItem {
+  static const kCountryKey = 'country';
   static const String jsonType = "Town";
   late final Country? country;
   Town(Map<String, dynamic> json) : super.fromJson(json) {
@@ -278,6 +314,15 @@ class Town extends ApiItem {
     } else {
       country = null;
     }
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    var res = super.toJson();
+    if (country != null) {
+      res[kCountryKey] = country!.toJson();
+    }
+    return res;
   }
 
   Town.fromDB(Map<String, Object?> map)
@@ -313,10 +358,11 @@ class Country extends ApiItem {
 }
 
 class Venue extends ApiItem {
+  static const kTownKey = 'town';
   static const String jsonType = "Venue";
   final Town town;
   Venue(Map<String, dynamic> json)
-      : town = ApiItem.maybeBuildFromJson(json['town'])! as Town,
+      : town = ApiItem.maybeBuildFromJson(json[kTownKey])! as Town,
         super.fromJson(json);
 
   Venue.fromDB(Map<String, Object?> map)
@@ -330,6 +376,13 @@ class Venue extends ApiItem {
   Map<String, dynamic> toMap() {
     var res = super.toMap();
     res['town_id'] = town.id;
+    return res;
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    var res = super.toJson();
+    res[kTownKey] = town.toJson();
     return res;
   }
 }
@@ -454,19 +507,28 @@ class APILoader {
     }
     final result = json.decode(response.body);
     List<T> data = List.generate(result['hydra:member'].length, (i) {
-      return ApiItem.maybeBuildFromJson(result['hydra:member'][i])! as T;
+      T item = ApiItem.maybeBuildFromJson(result['hydra:member'][i])! as T;
+      DBService.instance.addToCache(item);
+      return item;
     });
     return LazyApiLoader<T>(data, result['hydra:totalItems']);
   }
 
-  static Future<ApiItem> getByGlobalId(String globalId) async {
+  static Future<T> getByGlobalId<T extends ApiItem>(String globalId) async {
     developer.log('get by global id $globalId');
-    final response = await http.get(Uri.https(apiAddress, '$globalId'));
+    ApiItem? maybeFromCache = await DBService.instance.getFromCache(globalId);
+    if (maybeFromCache != null) {
+      return maybeFromCache as T;
+    }
+
+    final response = await http.get(Uri.https(apiAddress, globalId));
     if (response.statusCode != 200) {
       throw Exception('Failed to load $globalId: ${response.reasonPhrase}');
     }
     final result = json.decode(response.body);
-    return ApiItem.maybeBuildFromJson(result)!;
+    T item =  ApiItem.maybeBuildFromJson(result)! as T;
+    DBService.instance.addToCache(item);
+    return item;
   }
 
   /*
@@ -539,10 +601,11 @@ class _ApiItemListState<T extends ApiItem> extends State<ApiItemList<T>> {
   }
 }
 
-class DBService {
+class DBService extends ChangeNotifier {
   static DBService instance = DBService();
   late Database db;
   static const String kFavoritesTable = "favorites";
+  static const String kCacheTable = "CacheTable";
   Map<String, bool> favorites = {};
 
   DBService() {
@@ -577,6 +640,8 @@ class DBService {
             'CREATE TABLE IF NOT EXISTS $countryTableName(country_id INTEGER PRIMARY KEY, country_name TEXT)');
         await db.execute(
             'CREATE TABLE IF NOT EXISTS $kFavoritesTable(global_id STRING PRIMARY KEY, is_favorite BOOLEAN)');
+        await db.execute(
+            'CREATE TABLE IF NOT EXISTS $kCacheTable(global_id STRING PRIMARY KEY, json STRING)');
 
         {
           // load favorites
@@ -586,6 +651,7 @@ class DBService {
             favorites[fav["global_id"] as String] =
                 (fav["is_favorite"] as int) == 1;
           }
+          notifyListeners();
         }
       },
       version: 1,
@@ -601,7 +667,7 @@ class DBService {
     return favorites[globalId] ?? false;
   }
 
-  Future<void> flipIsFavorite(String globalId) async {
+  void flipIsFavorite(String globalId) {
     favorites[globalId] = !isFavorite(globalId);
     db
         .insert(
@@ -612,16 +678,35 @@ class DBService {
             },
             conflictAlgorithm: ConflictAlgorithm.replace)
         .then((value) => developer.log('Inserted as $value'));
+    notifyListeners();
+  }
+
+  void addToCache(ApiItem item) {
+    db.insert(kCacheTable,
+        {
+          "global_id": item.globalId,
+          "json": jsonEncode(item),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<ApiItem?> getFromCache(String globalId) async {
+    final result = await db.query(kCacheTable, where: "global_id = ?", whereArgs: [globalId]);
+    if (result.length != 1) {
+      return null;
+    }
+    return ApiItem.maybeBuildFromJson(jsonDecode(result[0]['json']! as String));
   }
 
   Future<List<T>> fetchFavorites<T extends ApiItem>() async {
     List<T> res = [];
-    for (final globalId in favorites.keys) {
+    final keys = favorites.keys.toList();
+    for (final globalId in keys) {
       developer.log('fetchFavorites $globalId');
       if (!globalId.contains(apiMethod<T>())) {
         continue;
       }
-      T item = await APILoader.getByGlobalId(globalId) as T;
+      T item = await APILoader.getByGlobalId<T>(globalId);
       res.add(item);
     }
     return res;
@@ -870,8 +955,8 @@ class SearchResults<T extends ApiItem> extends StatefulWidget {
 }
 
 class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
-  List<T> favorites = [];
-
+  List<String> favoritesIds = [];
+  //List<T> favorites = [];
   List<T> items = [];
   int page = 1;
   int more = 1;
@@ -891,14 +976,27 @@ class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
     dataSub = APILoader.getPage<T>(page++, searchPattern: widget.searchPattern.value).asStream().listen(_updateItems);
   }
 
-  @override
-  void initState() {
-    super.initState();
+  void _maybeUpdateFavorites() {
+    final newFavoritesIds = DBService.instance.getFavoritesIds<T>();
+    if (favoritesIds == newFavoritesIds) {
+      return;
+    }
+    favoritesIds = newFavoritesIds;
+    /*
     DBService.instance.fetchFavorites<T>().then((value) {
       setState(() {
         favorites = value;
       });
     });
+     */
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    _maybeUpdateFavorites();
+    DBService.instance.addListener(_maybeUpdateFavorites);
     _loadMore();
     widget.searchPattern.addListener(resetState);
   }
@@ -914,6 +1012,7 @@ class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
 
   @override
   void dispose() {
+    DBService.instance.removeListener(_maybeUpdateFavorites);
     widget.searchPattern.removeListener(resetState);
     dataSub?.cancel();
 
@@ -922,7 +1021,7 @@ class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
 
   @override
   Widget build(BuildContext context) {
-    final totalLength = favorites.length + items.length + more;
+    final totalLength = favoritesIds.length + items.length + more;
     if (totalLength == 0) {
       return const Text("No search results");
     }
@@ -933,11 +1032,11 @@ class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
           if (dataSub == null && more > 0 && index + 10 > totalLength) {
             _loadMore();
           }
-          developer.log('$index');
-          if (index < favorites.length) {
-            return SingleApiItem<T>(item: favorites[index]);
+          //developer.log('$index');
+          if (index < favoritesIds.length) {
+            return SingleLoadingItem<T>(globalId: favoritesIds[index]);
           }
-          index -= favorites.length;
+          index -= favoritesIds.length;
 
           if (index < items.length) {
             return SingleApiItem<T>(item: items[index]);
@@ -952,7 +1051,7 @@ class SingleLoadingItem<T extends ApiItem> extends StatelessWidget {
   final String globalId;
   late final Future<T> item;
   SingleLoadingItem({super.key, required this.globalId}) {
-    item = APILoader.getByGlobalId(globalId) as Future<T>;
+    item = APILoader.getByGlobalId<T>(globalId);
   }
   @override
   Widget build(context) {
@@ -982,6 +1081,30 @@ class SingleApiItem<T extends ApiItem> extends StatefulWidget {
 }
 
 class _SingleApiItemState<T extends ApiItem> extends State<SingleApiItem<T>> {
+  late bool isFavorite;
+
+  @override
+  void initState() {
+    super.initState();
+    isFavorite = DBService.instance.isFavorite(widget.item.globalId);
+    DBService.instance.addListener(_onDBChange);
+  }
+
+  void _onDBChange() {
+    if (isFavorite == DBService.instance.isFavorite(widget.item.globalId)) {
+      return;
+    }
+    setState(() {
+      isFavorite = DBService.instance.isFavorite(widget.item.globalId);
+    });
+  }
+
+  @override
+  void dispose() {
+    DBService.instance.removeListener(_onDBChange);
+    super.dispose();
+  }
+
   @override
   Widget build(context) {
     return ListTile(
@@ -989,9 +1112,7 @@ class _SingleApiItemState<T extends ApiItem> extends State<SingleApiItem<T>> {
         subtitle: Text(widget.item.subtitle),
         trailing: InkWell(
           child: Icon(
-            DBService.instance.isFavorite(widget.item.globalId)
-                ? Icons.favorite
-                : Icons.favorite_border,
+            isFavorite ? Icons.favorite : Icons.favorite_border,
           ),
           onTap: () {
             setState(() {
