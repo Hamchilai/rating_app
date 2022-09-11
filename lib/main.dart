@@ -4,6 +4,8 @@ import 'package:endless/endless.dart';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:async';
+import 'package:shared_preferences/shared_preferences.dart';
+
 
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
@@ -192,6 +194,12 @@ class ApiItem {
 
   static String generateGlobalId(String type, int id) {
     return "/${apiMethodFromString(type)}/$id";
+  }
+
+  static int getIdFromGlobalId(String globalId) {
+    final tokens = globalId.split('/');
+    assert(tokens.length == 3);
+    return int.parse(tokens[2]);
   }
 
   ApiItem(this.type, this.id, this.name) {
@@ -526,7 +534,7 @@ class APILoader {
       throw Exception('Failed to load $globalId: ${response.reasonPhrase}');
     }
     final result = json.decode(response.body);
-    T item =  ApiItem.maybeBuildFromJson(result)! as T;
+    T item = ApiItem.maybeBuildFromJson(result)! as T;
     DBService.instance.addToCache(item);
     return item;
   }
@@ -603,10 +611,15 @@ class _ApiItemListState<T extends ApiItem> extends State<ApiItemList<T>> {
 
 class DBService extends ChangeNotifier {
   static DBService instance = DBService();
+
   late Database db;
+  late final sharedPrefs;
+
+
   static const String kFavoritesTable = "favorites";
   static const String kCacheTable = "CacheTable";
   Map<String, bool> favorites = {};
+  Map<String, bool> selected = {};
 
   DBService() {
     openDB();
@@ -616,8 +629,17 @@ class DBService extends ChangeNotifier {
     final venuesTableName = apiMethod<Venue>();
     final townsTableName = apiMethod<Town>();
     final countryTableName = apiMethod<Country>();
-    db = await openDatabase(
-      join(await getDatabasesPath(), "local_cache.db"),
+
+    sharedPrefs = await SharedPreferences.getInstance();
+    // load favorites
+    final favList = sharedPrefs.getStringList(kFavoritesTable) ?? [];
+    for (final fav in favList) {
+      favorites[fav] = true;
+    }
+    notifyListeners();
+
+      db = await openDatabase(
+        join(await getDatabasesPath(), "local_cache.db"),
       onCreate: (db, version) async {
         developer.log('PREVED onCreate $version');
         await db.execute(
@@ -638,11 +660,17 @@ class DBService extends ChangeNotifier {
             'CREATE TABLE IF NOT EXISTS $townsTableName(town_id INTEGER PRIMARY KEY, town_name TEXT, country_id INTEGER)');
         await db.execute(
             'CREATE TABLE IF NOT EXISTS $countryTableName(country_id INTEGER PRIMARY KEY, country_name TEXT)');
-        await db.execute(
-            'CREATE TABLE IF NOT EXISTS $kFavoritesTable(global_id STRING PRIMARY KEY, is_favorite BOOLEAN)');
+        //await db.execute(
+            //'CREATE TABLE IF NOT EXISTS $kFavoritesTable(global_id STRING PRIMARY KEY, is_favorite BOOLEAN)');
+        //await db.execute(
+            //'CREATE TABLE IF NOT EXISTS $kFavoritesTable(global_id STRING PRIMARY KEY, is_favorite BOOLEAN)');
         await db.execute(
             'CREATE TABLE IF NOT EXISTS $kCacheTable(global_id STRING PRIMARY KEY, json STRING)');
 
+        // Delete not favorite
+        //await db.delete(kFavoritesTable, where: "is_favorite = ?", whereArgs: [0]);
+
+        /*
         {
           // load favorites
           final favs = await db.query(kFavoritesTable);
@@ -653,6 +681,7 @@ class DBService extends ChangeNotifier {
           }
           notifyListeners();
         }
+         */
       },
       version: 1,
     );
@@ -669,6 +698,9 @@ class DBService extends ChangeNotifier {
 
   void flipIsFavorite(String globalId) {
     favorites[globalId] = !isFavorite(globalId);
+    sharedPrefs.setStringList(kFavoritesTable, favorites.keys.where((element) => isFavorite(element)).toList());
+    notifyListeners();
+    /*
     db
         .insert(
             kFavoritesTable,
@@ -678,6 +710,15 @@ class DBService extends ChangeNotifier {
             },
             conflictAlgorithm: ConflictAlgorithm.replace)
         .then((value) => developer.log('Inserted as $value'));
+
+     */
+  }
+  bool isSelected(String globalId) {
+    return selected[globalId] ?? false;
+  }
+
+  void flipIsSelected(String globalId) {
+    selected[globalId] = !isSelected(globalId);
     notifyListeners();
   }
 
@@ -700,12 +741,8 @@ class DBService extends ChangeNotifier {
 
   Future<List<T>> fetchFavorites<T extends ApiItem>() async {
     List<T> res = [];
-    final keys = favorites.keys.toList();
-    for (final globalId in keys) {
+    for (final globalId in getFavoritesIds<T>()) {
       developer.log('fetchFavorites $globalId');
-      if (!globalId.contains(apiMethod<T>())) {
-        continue;
-      }
       T item = await APILoader.getByGlobalId<T>(globalId);
       res.add(item);
     }
@@ -714,13 +751,11 @@ class DBService extends ChangeNotifier {
 
   List<String> getFavoritesIds<T extends ApiItem>() {
     List<String> res = [];
-    for (final globalId in favorites.keys) {
-      if (!globalId.contains(apiMethod<T>())) {
-        continue;
-      }
-      res.add(globalId);
-    }
-    return res;
+    var keys = favorites.keys.where((element) => element.contains(apiMethod<T>())).toList();
+    keys.sort((a, b) {
+      return ApiItem.getIdFromGlobalId(a) - ApiItem.getIdFromGlobalId(b);
+    });
+    return keys;
   }
 
   Future<int?> findTownId(String name) async {
@@ -1081,12 +1116,15 @@ class SingleApiItem<T extends ApiItem> extends StatefulWidget {
 }
 
 class _SingleApiItemState<T extends ApiItem> extends State<SingleApiItem<T>> {
-  late bool isFavorite;
+  bool isFavorite = false;
+  bool isSelected = false;
 
   @override
   void initState() {
     super.initState();
     isFavorite = DBService.instance.isFavorite(widget.item.globalId);
+    isSelected = DBService.instance.isSelected(widget.item.globalId);
+    //isSelected = DBService.instance.isSelected(widget.item.globalId);
     DBService.instance.addListener(_onDBChange);
   }
 
@@ -1119,7 +1157,20 @@ class _SingleApiItemState<T extends ApiItem> extends State<SingleApiItem<T>> {
               DBService.instance.flipIsFavorite(widget.item.globalId);
             });
           },
-        )
+        ),
+      leading: Checkbox(
+          value: DBService.instance.isSelected(widget.item.globalId),
+          onChanged: (bool? value) {
+            setState(() {
+              DBService.instance.flipIsSelected(widget.item.globalId);
+            });
+          }
+      ),
+      onTap: () {
+        setState(() {
+          DBService.instance.flipIsSelected(widget.item.globalId);
+        });
+      },
     );
   }
 }
