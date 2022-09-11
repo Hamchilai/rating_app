@@ -613,13 +613,13 @@ class DBService extends ChangeNotifier {
   static DBService instance = DBService();
 
   late Database db;
-  late final sharedPrefs;
+  late final SharedPreferences sharedPrefs;
 
 
   static const String kFavoritesTable = "favorites";
   static const String kCacheTable = "CacheTable";
   Map<String, bool> favorites = {};
-  Map<String, bool> selected = {};
+  Map<String, String> selectedTeam = {};
 
   DBService() {
     openDB();
@@ -713,13 +713,30 @@ class DBService extends ChangeNotifier {
 
      */
   }
-  bool isSelected(String globalId) {
-    return selected[globalId] ?? false;
+  
+  static const kSelectedPrefix = "selected";
+  
+  static String selectedKey(Player player) => "$kSelectedPrefix${player.globalId}";
+  bool isSelected(Player player, Team team) {
+    return sharedPrefs.getString(selectedKey(player)) == team.globalId;
   }
 
-  void flipIsSelected(String globalId) {
-    selected[globalId] = !isSelected(globalId);
+  void flipIsSelected(Player player, Team team) {
+    if (isSelected(player, team)) {
+      sharedPrefs.remove(selectedKey(player));
+    } else {
+      sharedPrefs.setString(selectedKey(player), team.globalId);
+    }
     notifyListeners();
+  }
+
+  static const kMaxLRPLength = 10;
+  static const kLRPPrefix = "LRP";
+  static String getLRPKey(Team team) => "$kLRPPrefix${team.globalId}";
+
+  // Returns the list of players selected for teamId. At most kMaxRPLength
+  List<String> getLRP(Team team) {
+    return sharedPrefs.getStringList(getLRPKey(team)) ?? [];
   }
 
   void addToCache(ApiItem item) {
@@ -879,51 +896,6 @@ class ApiItemListWithSearch<T extends ApiItem> extends StatelessWidget {
           },
         ),
         SearchResults<T>(searchPattern: searchPatternNotifier),
-        /*
-        Expanded(
-            child: EndlessPaginationListView<T>(
-                loadMore: (pageIndex) {
-                  if (T == Venue) {
-                    return DBService.instance
-                        .getPage<T>(pageIndex, pageSize, searchPattern ?? "");
-                  }
-                  return TeamsHttpService.instance.getPage(
-                      apiMethod<T>(), pageIndex + 1, pageSize,
-                      searchPattern: searchPattern);
-                },
-                paginationDelegate: EndlessPaginationDelegate(
-                  pageSize: pageSize,
-                ),
-                controller: controller,
-                itemBuilder: (
-                  context, {
-                  required item,
-                  required index,
-                  required totalItems,
-                }) {
-                  return ListTile(
-                      title: Text(
-                        item.title,
-                        //style: _biggerFont,
-                      ),
-                      subtitle: Text(
-                        item.subtitle,
-                      ),
-                      trailing: InkWell(
-                        child: Icon(
-                          DBService.instance.isFavorite(item.globalId)
-                              ? Icons.favorite
-                              : Icons.favorite_border,
-                        ),
-                        onTap: () {
-                          setState(() {
-                            DBService.instance.flipIsFavorite(item.globalId);
-                          });
-                        },
-                      ));
-                }))
-
-         */
       ],
     );
   }
@@ -1117,13 +1089,11 @@ class SingleApiItem<T extends ApiItem> extends StatefulWidget {
 
 class _SingleApiItemState<T extends ApiItem> extends State<SingleApiItem<T>> {
   bool isFavorite = false;
-  bool isSelected = false;
 
   @override
   void initState() {
     super.initState();
     isFavorite = DBService.instance.isFavorite(widget.item.globalId);
-    isSelected = DBService.instance.isSelected(widget.item.globalId);
     //isSelected = DBService.instance.isSelected(widget.item.globalId);
     DBService.instance.addListener(_onDBChange);
   }
@@ -1145,32 +1115,98 @@ class _SingleApiItemState<T extends ApiItem> extends State<SingleApiItem<T>> {
 
   @override
   Widget build(context) {
+    Widget? leading;
+    void Function()? onTap;
+    void Function()? onLongPressed;
+    TeamInherited? teamInherited = TeamInherited.of(context);
+    if (T == Player && teamInherited != null) {
+      leading =  Checkbox(
+          value: DBService.instance.isSelected(widget.item as Player, teamInherited.team),
+          onChanged: (bool? value) {
+            setState(() {
+              DBService.instance.flipIsSelected(widget.item as Player, teamInherited.team);
+            });
+          }
+      );
+      onTap = () {
+        setState(() {
+          DBService.instance.flipIsSelected(widget.item as Player, teamInherited.team);
+        });
+      };
+    }
+
+    if (T == Team) {
+      onLongPressed = () {
+        Navigator.of(context).push(
+            MaterialPageRoute<void>(
+            builder: (context) {
+              return TeamChoiceCrewView(team: widget.item as Team);
+            }
+            )
+        );
+      };
+    }
     return ListTile(
         title: Text(widget.item.title),
         subtitle: Text(widget.item.subtitle),
-        trailing: InkWell(
-          child: Icon(
+        trailing: IconButton(
+          icon: Icon(
             isFavorite ? Icons.favorite : Icons.favorite_border,
           ),
-          onTap: () {
+          onPressed: () {
             setState(() {
               DBService.instance.flipIsFavorite(widget.item.globalId);
             });
           },
         ),
-      leading: Checkbox(
-          value: DBService.instance.isSelected(widget.item.globalId),
-          onChanged: (bool? value) {
-            setState(() {
-              DBService.instance.flipIsSelected(widget.item.globalId);
-            });
-          }
+      leading: leading,
+      onTap: onTap,
+      onLongPress: onLongPressed,
+    );
+  }
+}
+
+class TeamInherited extends InheritedWidget {
+  final Team team;
+  const TeamInherited({super.key, required this.team, required super.child});
+
+  static TeamInherited? of(BuildContext context) {
+    return context.dependOnInheritedWidgetOfExactType<TeamInherited>();
+  }
+
+  @override
+  bool updateShouldNotify(TeamInherited oldWidget) => team.id != oldWidget.team.id;
+}
+
+class TeamChoiceCrewView extends StatelessWidget {
+  final Team team;
+  late final List<String> players;
+  TeamChoiceCrewView({super.key, required this.team}) {
+    final favorites = DBService.instance.getFavoritesIds<Player>();
+    players = DBService.instance.getLRP(team);
+    players.addAll(favorites.where((element) => !players.contains(element)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(team.name),
       ),
-      onTap: () {
-        setState(() {
-          DBService.instance.flipIsSelected(widget.item.globalId);
-        });
-      },
+      body: TeamInherited(
+        team: team,
+        child: Column(
+            children:
+            [
+              ListView.builder(
+                  itemCount: players.length,
+                  itemBuilder: (context, index) {
+                    return SingleLoadingItem<Player>(globalId: players[index]);
+                  }),
+              ApiItemListWithSearch<Player>()
+            ]
+        ),
+      ),
     );
   }
 }
