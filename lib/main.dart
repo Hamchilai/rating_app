@@ -612,14 +612,13 @@ class _ApiItemListState<T extends ApiItem> extends State<ApiItemList<T>> {
 class DBService extends ChangeNotifier {
   static DBService instance = DBService();
 
+  late Future<Database> futureDB;
   late Database db;
   late final SharedPreferences sharedPrefs;
 
-
   static const String kFavoritesTable = "favorites";
   static const String kCacheTable = "CacheTable";
-  Map<String, bool> favorites = {};
-  Map<String, String> selectedTeam = {};
+  late Map<String, bool> favorites;
 
   DBService() {
     openDB();
@@ -630,16 +629,8 @@ class DBService extends ChangeNotifier {
     final townsTableName = apiMethod<Town>();
     final countryTableName = apiMethod<Country>();
 
-    sharedPrefs = await SharedPreferences.getInstance();
-    // load favorites
-    final favList = sharedPrefs.getStringList(kFavoritesTable) ?? [];
-    for (final fav in favList) {
-      favorites[fav] = true;
-    }
-    notifyListeners();
-
-      db = await openDatabase(
-        join(await getDatabasesPath(), "local_cache.db"),
+    futureDB = openDatabase(
+      join(await getDatabasesPath(), "local_cache.db"),
       onCreate: (db, version) async {
         developer.log('PREVED onCreate $version');
         await db.execute(
@@ -661,9 +652,9 @@ class DBService extends ChangeNotifier {
         await db.execute(
             'CREATE TABLE IF NOT EXISTS $countryTableName(country_id INTEGER PRIMARY KEY, country_name TEXT)');
         //await db.execute(
-            //'CREATE TABLE IF NOT EXISTS $kFavoritesTable(global_id STRING PRIMARY KEY, is_favorite BOOLEAN)');
+        //'CREATE TABLE IF NOT EXISTS $kFavoritesTable(global_id STRING PRIMARY KEY, is_favorite BOOLEAN)');
         //await db.execute(
-            //'CREATE TABLE IF NOT EXISTS $kFavoritesTable(global_id STRING PRIMARY KEY, is_favorite BOOLEAN)');
+        //'CREATE TABLE IF NOT EXISTS $kFavoritesTable(global_id STRING PRIMARY KEY, is_favorite BOOLEAN)');
         await db.execute(
             'CREATE TABLE IF NOT EXISTS $kCacheTable(global_id STRING PRIMARY KEY, json STRING)');
 
@@ -685,6 +676,16 @@ class DBService extends ChangeNotifier {
       },
       version: 1,
     );
+
+    sharedPrefs = await SharedPreferences.getInstance();
+    // load favorites
+    final favList = sharedPrefs.getStringList(kFavoritesTable) ?? [];
+    favorites = {};
+    for (final fav in favList) {
+      favorites[fav] = true;
+    }
+
+    db = await futureDB;
   }
 
   bool isFavorite(String globalId) {
@@ -721,11 +722,19 @@ class DBService extends ChangeNotifier {
     return sharedPrefs.getString(selectedKey(player)) == team.globalId;
   }
 
+  static const int kMaxLrpLength = 10;
   void flipIsSelected(Player player, Team team) {
     if (isSelected(player, team)) {
       sharedPrefs.remove(selectedKey(player));
     } else {
       sharedPrefs.setString(selectedKey(player), team.globalId);
+      List<String> lrp = getLRP(team);
+      lrp.remove(player.globalId);
+      lrp.insert(0, player.globalId);
+      if (lrp.length > kMaxLrpLength) {
+        lrp.length = kMaxLRPLength;
+      }
+      sharedPrefs.setStringList(getLRPKey(team), lrp);
     }
     notifyListeners();
   }
@@ -749,17 +758,25 @@ class DBService extends ChangeNotifier {
   }
 
   Future<ApiItem?> getFromCache(String globalId) async {
-    final result = await db.query(kCacheTable, where: "global_id = ?", whereArgs: [globalId]);
+    final localdb = await futureDB;
+    final result = await localdb.query(kCacheTable, where: "global_id = ?", whereArgs: [globalId]);
     if (result.length != 1) {
       return null;
     }
     return ApiItem.maybeBuildFromJson(jsonDecode(result[0]['json']! as String));
   }
 
-  Future<List<T>> fetchFavorites<T extends ApiItem>() async {
+  Future<List<T>> fetchFavorites<T extends ApiItem>({String? searchPattern, Team? team}) async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+
     List<T> res = [];
-    for (final globalId in getFavoritesIds<T>()) {
-      developer.log('fetchFavorites $globalId');
+
+    var favIds = prefs.getStringList(kFavoritesTable) ?? [];
+    favIds.sort((a, b) {
+      return ApiItem.getIdFromGlobalId(a) - ApiItem.getIdFromGlobalId(b);
+    });
+
+    for (final globalId in favIds.where((element) => element.contains(apiMethod<T>()))) {
       T item = await APILoader.getByGlobalId<T>(globalId);
       res.add(item);
     }
@@ -961,65 +978,128 @@ class SearchResults<T extends ApiItem> extends StatefulWidget {
   }
 }
 
-class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
-  List<String> favoritesIds = [];
-  //List<T> favorites = [];
+class MultipleSourceLoader<T extends ApiItem> {
+  final Team? team;
+  final String searchPattern;
+  // The result
   List<T> items = [];
-  int page = 1;
-  int more = 1;
-  StreamSubscription<List<T>>? dataSub;
 
-  void _updateItems(List<T> newItems) {
+  // The set of global ids built from items list. Used to avoid duplicates in the items list.
+  Set<String> globalIds = {};
+
+  int nextPage = -1;
+  bool isMore = true;
+
+  MultipleSourceLoader({this.team, required this.searchPattern}) {
+    if (team != null) {
+      assert(T == Player);
+    }
+  }
+
+  int get uiItemsCount => items.length + (isMore ? 1 : 0);
+
+  Future<void> loadMore() async {
+    assert(isMore);
+
+    if (nextPage > 0) {
+      final nextBatch = await APILoader.getPage<T>(nextPage++, searchPattern: searchPattern);
+      for (final T item in nextBatch) {
+        _maybeAdd(item);
+      }
+      isMore = nextBatch.length == APILoader.kItemsPerPage;
+      return;
+    }
+
+    // Initial load for least recent players.
+    if (team != null) {
+      final List<String> lrp = DBService.instance.getLRP(team!);
+      _addAll(lrp);
+    }
+
+    // Load favorites.
+    final List<T> favorites = await DBService.instance.fetchFavorites<T>();
+    for (final T item in favorites) {
+      _maybeAdd(item);
+    }
+
+    // Mark to load online next
+    nextPage = 1;
+  }
+
+  void _addAll(List<String> more) async {
+    for (final globalId in more) {
+      if (globalIds.contains(globalId)) {
+        continue;
+      }
+      T item = (await APILoader.getByGlobalId(globalId)) as T;
+      _maybeAdd(item);
+    }
+  }
+
+  void _maybeAdd(T item) {
+    if (globalIds.contains(item.globalId)) {
+      return;
+    }
+    globalIds.add(item.globalId);
+    items.add(item);
+  }
+}
+
+class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
+  MultipleSourceLoader<T>? loader;
+
+  StreamSubscription<void>? dataSub;
+
+  void _updateItems(void event) {
+    developer.log('_update items ${loader!.items.length}');
     setState(() {
-      dataSub?.cancel();
       dataSub = null;
-      items.addAll(newItems);
-      more = newItems.length == APILoader.kItemsPerPage ? 1 : 0;
     });
   }
 
   void _loadMore() {
     dataSub?.cancel();
-    dataSub = APILoader.getPage<T>(page++, searchPattern: widget.searchPattern.value).asStream().listen(_updateItems);
+    dataSub = loader!.loadMore().asStream().listen(_updateItems);
   }
 
+/*
   void _maybeUpdateFavorites() {
     final newFavoritesIds = DBService.instance.getFavoritesIds<T>();
     if (favoritesIds == newFavoritesIds) {
       return;
     }
     favoritesIds = newFavoritesIds;
-    /*
     DBService.instance.fetchFavorites<T>().then((value) {
       setState(() {
         favorites = value;
       });
     });
-     */
   }
+     */
 
   @override
   void initState() {
     super.initState();
-
-    _maybeUpdateFavorites();
-    DBService.instance.addListener(_maybeUpdateFavorites);
-    _loadMore();
     widget.searchPattern.addListener(resetState);
   }
 
   void resetState() {
+    TeamInherited? teamInherited = TeamInherited.of(super.context);
     setState(() {
-      items = [];
-      page = 1;
-      more = 1;
-      _loadMore();
+      loader = MultipleSourceLoader(searchPattern: widget.searchPattern.value, team: teamInherited?.team);
     });
+    _loadMore();
+  }
+
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    resetState();
   }
 
   @override
   void dispose() {
-    DBService.instance.removeListener(_maybeUpdateFavorites);
     widget.searchPattern.removeListener(resetState);
     dataSub?.cancel();
 
@@ -1028,25 +1108,20 @@ class _SearchResultsState<T extends ApiItem> extends State<SearchResults<T>> {
 
   @override
   Widget build(BuildContext context) {
-    final totalLength = favoritesIds.length + items.length + more;
+    final totalLength = loader!.uiItemsCount;
     if (totalLength == 0) {
       return const Text("No search results");
     }
-    developer.log('length ${items.length} ');
     return Expanded(child: ListView.builder(
         itemCount: totalLength,
         itemBuilder: (context, index) {
-          if (dataSub == null && more > 0 && index + 10 > totalLength) {
+          if (dataSub == null && loader!.isMore && index + 10 > totalLength) {
+            developer.log('PREVED load online');
             _loadMore();
           }
-          //developer.log('$index');
-          if (index < favoritesIds.length) {
-            return SingleLoadingItem<T>(globalId: favoritesIds[index]);
-          }
-          index -= favoritesIds.length;
 
-          if (index < items.length) {
-            return SingleApiItem<T>(item: items[index]);
+          if (index < loader!.items.length) {
+            return SingleApiItem<T>(item: loader!.items[index]);
           }
           return Center(child: CircularProgressIndicator());
         }),
@@ -1180,12 +1255,7 @@ class TeamInherited extends InheritedWidget {
 
 class TeamChoiceCrewView extends StatelessWidget {
   final Team team;
-  late final List<String> players;
-  TeamChoiceCrewView({super.key, required this.team}) {
-    final favorites = DBService.instance.getFavoritesIds<Player>();
-    players = DBService.instance.getLRP(team);
-    players.addAll(favorites.where((element) => !players.contains(element)));
-  }
+  const TeamChoiceCrewView({super.key, required this.team});
 
   @override
   Widget build(BuildContext context) {
@@ -1195,17 +1265,7 @@ class TeamChoiceCrewView extends StatelessWidget {
       ),
       body: TeamInherited(
         team: team,
-        child: Column(
-            children:
-            [
-              ListView.builder(
-                  itemCount: players.length,
-                  itemBuilder: (context, index) {
-                    return SingleLoadingItem<Player>(globalId: players[index]);
-                  }),
-              ApiItemListWithSearch<Player>()
-            ]
-        ),
+        child: ApiItemListWithSearch<Player>(),
       ),
     );
   }
