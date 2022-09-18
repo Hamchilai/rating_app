@@ -186,10 +186,10 @@ class ApiItem {
 
   late final String globalId;
   final String type;
-  final int id;
-  final String name;
+  final int? id;
+  final String? name;
 
-  String get title => name;
+  String get title => name ?? 'null';
   String get subtitle => 'id: $id';
 
   static String generateGlobalId(String type, int id) {
@@ -203,14 +203,16 @@ class ApiItem {
   }
 
   ApiItem(this.type, this.id, this.name) {
-    globalId = generateGlobalId(type, id);
+    globalId = generateGlobalId(type, id!);
   }
   ApiItem.fromJson(Map<String, dynamic> json)
       : globalId = json[kGlobalIdKey],
         type = json[kTypeKey],
         id = json[kIdKey],
         name = json[kNameKey] {
-    assert(globalId == generateGlobalId(type, id));
+    if (id != null) {
+      assert(globalId == generateGlobalId(type, id!));
+    }
   }
   Map<String, dynamic> toJson() {
     return {
@@ -240,6 +242,8 @@ class ApiItem {
         return Country(json);
       case Venue.jsonType:
         return Venue(json);
+      case TeamSeason.jsonType:
+        return TeamSeason(json);
     }
     throw Exception("Can't build an item from ${json.toString()}");
   }
@@ -365,6 +369,32 @@ class Country extends ApiItem {
             jsonType, map['country_id'] as int, map['country_name'] as String);
 }
 
+class TeamSeason extends ApiItem {
+  static const String kIdPlayerKey = "idplayer";
+  static const String kIdSeasonKey = "idseason";
+  static const String kIdTeamKey = "idteam";
+  static const String kDateAddedKey = "dateAdded";
+  static const String kDateRemovedKey = "dateRemoved";
+  static const String kPlayerNumberKey = "playerNumber";
+
+  static const String jsonType = "TeamSeason";
+
+  late final int idPlayer;
+  late final int idSeason;
+  late final int idTeam;
+  late final DateTime? dateAdded;
+  late final DateTime? dateRemoved;
+  late final int isCaptain;
+  TeamSeason(Map<String, dynamic> json) : super.fromJson(json) {
+    idPlayer = json[kIdPlayerKey];
+    idSeason = json[kIdSeasonKey];
+    idTeam = json[kIdTeamKey];
+    dateAdded = DateTime.tryParse(json[kDateAddedKey] ?? "");
+    dateRemoved = DateTime.tryParse(json[kDateRemovedKey] ?? "");
+    isCaptain = json[kPlayerNumberKey];
+  }
+}
+
 class Venue extends ApiItem {
   static const kTownKey = 'town';
   static const String jsonType = "Venue";
@@ -411,6 +441,10 @@ String apiMethod<T>() {
   if (T == Venue) {
     return "venues";
   }
+  if (T == TeamSeason) {
+    return "seasons";
+  }
+
   throw Exception("Not reached");
 }
 
@@ -491,22 +525,52 @@ class APILoader {
     return params;
   }
 
-  static Future<List<T>> getPage<T extends ApiItem>(int page,
-      {String? searchPattern}) async {
-    final loader = await getLazyApiLoader<T>(page, searchPattern: searchPattern);
-    return loader.data;
+  static Future<List<T>> getPage<T extends ApiItem>({int? page,
+      String? searchPattern, Team? team}) async {
+    String method = apiMethod<T>();
+    Map<String, dynamic> options = {};
+    if (page != null) {
+      options['page'] = page.toString();
+      options['itemsPerPage'] = kItemsPerPage.toString();
+    }
+
+    if (searchPattern != null && searchPattern.isNotEmpty) {
+      final searchParams = await getSearchParams<T>(searchPattern);
+      options.addAll(searchParams);
+    }
+    if (T == TeamSeason) {
+      options['idseason[]'] = ['56', '57'];
+      assert(team != null);
+      method = 'teams/${team!.id}/$method';
+    }
+    developer.log('get options $options');
+    final response = await http.get(Uri.https(apiAddress, '/$method', options));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load $method: ${response.reasonPhrase}');
+    }
+    final result = json.decode(response.body);
+    return List.generate(result['hydra:member'].length, (i) {
+      T item = ApiItem.maybeBuildFromJson(result['hydra:member'][i])! as T;
+      DBService.instance.addToCache(item);
+      return item;
+    });
   }
 
+  /*
   static Future<LazyApiLoader<T>> getLazyApiLoader<T extends ApiItem>(int page,
       {String? searchPattern}) async {
     final String method = apiMethod<T>();
-    var options = {
+    Map<String, dynamic> options = {
       'page': page.toString(),
       'itemsPerPage': kItemsPerPage.toString()
     };
     if (searchPattern != null && searchPattern.isNotEmpty) {
       final searchParams = await getSearchParams<T>(searchPattern);
       options.addAll(searchParams);
+    }
+    if (T == TeamSeason) {
+      options['idseason'] = ['56', '57'];
     }
     final response = await http.get(Uri.https(apiAddress, '/$method', options));
 
@@ -521,6 +585,7 @@ class APILoader {
     });
     return LazyApiLoader<T>(data, result['hydra:totalItems']);
   }
+   */
 
   static Future<T> getByGlobalId<T extends ApiItem>(String globalId) async {
     developer.log('get by global id $globalId');
@@ -539,10 +604,34 @@ class APILoader {
     return item;
   }
 
+  static const kMaxBasePlayers = 9;
+  static Future<List<String>> fetchBasePlayers(Team team) async {
+    List<TeamSeason> teamSeasons = await APILoader.getPage<TeamSeason>(team: team);
+    developer.log('PREVED fetched ${teamSeasons.length}');
+    teamSeasons.sort((TeamSeason a, TeamSeason b) {
+      if (a.idSeason != b.idSeason) {
+        return b.idSeason - a.idSeason;
+      }
+      if (a.isCaptain != b.isCaptain) {
+        return b.isCaptain - a.isCaptain;
+      }
+      if (a.dateAdded != null && b.dateAdded != null) {
+        return a.dateAdded!.compareTo(b.dateAdded!);
+      }
+      return a.idPlayer - b.idPlayer;
+    });
+    /*
+    if (teamSeasons.length > kMaxBasePlayers) {
+      teamSeasons.length = kMaxBasePlayers;
+    }
+     */
+    return teamSeasons.map((e) => ApiItem.generateGlobalId(Player.jsonType, e.idPlayer)).toList();
+  }
+
   /*
   Stream<ApiItem> ratingStream(String path) async* {
     final response = await http.get(Uri.parse(apiUrl + path));
-    if (response.statusCode != 200) {
+    if (response.statusCode != 20j0) {
       throw Exception('Failed to load $path');
     }
     final result = json.decode(response.body);
@@ -585,7 +674,7 @@ class _ApiItemListState<T extends ApiItem> extends State<ApiItemList<T>> {
   Widget build(BuildContext context) {
     return EndlessPaginationListView<T>(
         loadMore: (pageIndex) {
-          return APILoader.getPage<T>(pageIndex + 1);
+          return APILoader.getPage<T>(page: pageIndex + 1);
         },
         paginationDelegate: EndlessPaginationDelegate(
           pageSize: APILoader.kItemsPerPage,
@@ -858,7 +947,7 @@ class DBService extends ChangeNotifier {
         await db.rawQuery('SELECT COUNT(*) FROM $tableName'))!;
     developer.log('PREVED $count in $tableName');
     for (int page = count ~/ APILoader.kItemsPerPage;; page++) {
-      var data = await APILoader.getPage<T>(page + 1);
+      var data = await APILoader.getPage<T>(page: page + 1);
       Batch batch = db.batch();
       for (T t in data) {
         batch.insert(tableName, t.toMap(),
@@ -960,7 +1049,7 @@ class LazyApiLoader<T extends ApiItem> {
     int nextPage = data.length ~/ APILoader.kItemsPerPage + 1;
     developer.log('PREVED fetchdata at $nextPage');
     final nextBatch =
-        await APILoader.getPage<T>(nextPage, searchPattern: searchPattern);
+        await APILoader.getPage<T>(page: nextPage, searchPattern: searchPattern);
     data.addAll(nextBatch);
   }
 
@@ -988,7 +1077,7 @@ class StreamLoader<T extends ApiItem> {
   void _loadData() async {
     while (!_controller.isClosed && !_controller.isPaused) {
       final nextBatch =
-          await APILoader.getPage<T>(page++, searchPattern: searchPattern);
+          await APILoader.getPage<T>(page: page++, searchPattern: searchPattern);
       for (final item in nextBatch) {
         _controller.add(item as T);
       }
@@ -1032,8 +1121,34 @@ class MultipleSourceLoader<T extends ApiItem> {
   Future<void> loadMore() async {
     assert(isMore);
 
+    if (nextPage < 0) {
+      // Initial load for least recent players.
+      if (team != null) {
+        final List<String> lrp = await DBService.instance.getLRP(team!);
+        _addAll(lrp);
+      }
+
+      // Load favorites.
+      final List<T> favorites = await DBService.instance.fetchFavorites<T>();
+      for (final T item in favorites) {
+        _maybeAdd(item);
+      }
+
+      nextPage = 0;
+      return;
+    }
+
+    if (nextPage == 0) {
+      if (team != null) {
+        // load base crews.
+        _addAll(await APILoader.fetchBasePlayers(team!));
+      }
+      nextPage = 1;
+      return;
+    }
+
     if (nextPage > 0) {
-      final nextBatch = await APILoader.getPage<T>(nextPage++, searchPattern: searchPattern);
+      final nextBatch = await APILoader.getPage<T>(page: nextPage++, searchPattern: searchPattern);
       for (final T item in nextBatch) {
         _maybeAdd(item);
       }
@@ -1041,23 +1156,10 @@ class MultipleSourceLoader<T extends ApiItem> {
       return;
     }
 
-    // Initial load for least recent players.
-    if (team != null) {
-      final List<String> lrp = await DBService.instance.getLRP(team!);
-      _addAll(lrp);
-    }
-
-    // Load favorites.
-    final List<T> favorites = await DBService.instance.fetchFavorites<T>();
-    for (final T item in favorites) {
-      _maybeAdd(item);
-    }
-
-    // Mark to load online next
-    nextPage = 1;
   }
 
   void _addAll(List<String> more) async {
+    developer.log('PREVED _addAll $more');
     for (final globalId in more) {
       if (globalIds.contains(globalId)) {
         continue;
@@ -1293,7 +1395,7 @@ class TeamChoiceCrewView extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(team.name),
+        title: Text(team.name!),
       ),
       body: TeamInherited(
         team: team,
